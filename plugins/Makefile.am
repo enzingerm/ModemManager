@@ -1096,6 +1096,22 @@ libmm_plugin_sierra_la_LDFLAGS  = $(PLUGIN_COMMON_LINKER_FLAGS)
 endif
 
 ################################################################################
+# plugin: xmm7360
+################################################################################
+
+if ENABLE_PLUGIN_XMM7360
+
+pkglib_LTLIBRARIES += libmm-plugin-xmm7360.la
+libmm_plugin_xmm7360_la_SOURCES = \
+	xmm7360/mm-plugin-xmm7360.c \
+	xmm7360/mm-plugin-xmm7360.h \
+	$(NULL)
+libmm_plugin_xmm7360_la_CPPFLAGS = $(PLUGIN_COMMON_COMPILER_FLAGS)
+libmm_plugin_xmm7360_la_LDFLAGS  = $(PLUGIN_COMMON_LINKER_FLAGS)
+
+endif
+
+################################################################################
 # plugin: simtech
 ################################################################################
 
