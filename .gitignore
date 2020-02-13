@@ -170,6 +170,8 @@ Makefile.in
 
 /plugins/telit/mm-telit-enums-types.[ch]
 
+/plugins/xmm7360/mm-xmm7360-rpc-enums-types.[ch]
+
 /test/lsudev
 /test/mmtty
 /test/mmrules

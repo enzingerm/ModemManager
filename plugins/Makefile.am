@@ -1109,6 +1109,37 @@ libmm_plugin_xmm7360_la_SOURCES = \
 libmm_plugin_xmm7360_la_CPPFLAGS = $(PLUGIN_COMMON_COMPILER_FLAGS)
 libmm_plugin_xmm7360_la_LDFLAGS  = $(PLUGIN_COMMON_LINKER_FLAGS)
 
+XMM7360_ENUMS_INPUTS = \
+	$(top_srcdir)/plugins/xmm7360/mm-xmm7360-rpc.h \
+	$(NULL)
+
+XMM7360_ENUMS_GENERATED = \
+	xmm7360/mm-xmm7360-rpc-enums-types.h \
+	xmm7360/mm-xmm7360-rpc-enums-types.c \
+	$(NULL)
+
+xmm7360/mm-xmm7360-rpc-enums-types.h: Makefile.am $(XMM7360_ENUMS_INPUTS) $(top_srcdir)/build-aux/mm-enums-template.h
+	$(AM_V_GEN) \
+		$(MKDIR_P) xmm7360; \
+		$(GLIB_MKENUMS) \
+			--fhead "#include \"mm-modem-helpers-xmm7360.h\"\n#ifndef __MM_XMM7360_ENUMS_TYPES_H__\n#define __MM_XMM7360_ENUMS_TYPES_H__\n" \
+			--template $(top_srcdir)/build-aux/mm-enums-template.h \
+			--ftail "#endif /* __MM_XMM7360_ENUMS_TYPES_H__ */\n" \
+			$(XMM7360_ENUMS_INPUTS) > $@
+
+xmm7360/mm-xmm7360-rpc-enums-types.c: Makefile.am $(top_srcdir)/build-aux/mm-enums-template.c xmm7360/mm-xmm7360-rpc-enums-types.h
+	$(AM_V_GEN) \
+		$(MKDIR_P) xmm7360; \
+		$(GLIB_MKENUMS) \
+			--fhead "#include \"mm-xmm7360-rpc-enums-types.h\"" \
+			--template $(top_srcdir)/build-aux/mm-enums-template.c \
+			$(XMM7360_ENUMS_INPUTS) > $@
+
+nodist_libhelpers_xmm7360_la_SOURCES = $(XMM7360_ENUMS_GENERATED)
+
+BUILT_SOURCES += $(XMM7360_ENUMS_GENERATED)
+CLEANFILES    += $(XMM7360_ENUMS_GENERATED)
+
 endif
 
 ################################################################################
