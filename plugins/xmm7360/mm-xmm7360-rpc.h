@@ -16,6 +16,9 @@
 #ifndef MM_XMM7360_RPC_H
 #define MM_XMM7360_RPC_H
 
+#include <gmodule.h>
+#include <glib.h>
+
 typedef enum {
     UtaMsSimOpenReq = 1,
     UtaMsSimApduCmdReq = 2,
@@ -477,5 +480,12 @@ typedef enum {
     CsiMsNetLdrGetApnPlmnParameterListRspCb = 0x1c6,
     UtaMsNetLdrApnParametersChangeIndCb = 0x1c7,
 } Xmm7360RpcUnsolIds;
+
+/**
+ * Encode a integer
+ */
+GByteArray * asn_int4(gint32);
+
+
 
 #endif /* MM_XMM7360_RPC_H */
