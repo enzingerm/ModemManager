@@ -484,8 +484,11 @@ typedef enum {
 /**
  * Encode a integer
  */
-GByteArray * asn_int4(gint32);
+GByteArray* asn_int4(gint32);
 
-
+/**
+ * Retrieve an integer
+ */
+gint get_asn_int(gchar* data, gint len);
 
 #endif /* MM_XMM7360_RPC_H */

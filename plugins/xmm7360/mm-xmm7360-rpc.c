@@ -15,12 +15,30 @@
 
 
 
+#include <assert.h>
 #include "mm-xmm7360-rpc.h"
 
-GByteArray * asn_int4(gint32 val) {
-    GByteArray *arr = g_byte_array_sized_new (6);
+GByteArray* asn_int4(gint32 val) {
+    GByteArray* arr = g_byte_array_sized_new(6);
     gint32 be = GINT32_TO_BE(val);
     g_byte_array_append(arr, (guint8*)"\x02\x04", 2);
     g_byte_array_append(arr, (guint8*)&be, 4);
     return arr;
+}
+
+gint get_asn_int(gchar* data, gint len) {
+    gint size;
+    gint val;
+    assert(*data++ == 2);
+    assert(len > 2);
+    size = *data++;
+    len -=2;
+    assert(len > size);
+    val = 0;
+    do {
+        val <<= 8;
+        val |= *data++;
+    } while(--size > 0);
+
+    return val;
 }
