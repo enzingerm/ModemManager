@@ -489,6 +489,11 @@ GByteArray* asn_int4(gint32);
 /**
  * Retrieve an integer
  */
-gint get_asn_int(gchar* data, gint len);
+gint get_asn_int(GBytes* bytes, gsize* current_offset);
+
+/**
+ * Retrieve an encoded string
+ */
+GBytes* get_string(GBytes* bytes, gsize* current_offset);
 
 #endif /* MM_XMM7360_RPC_H */
