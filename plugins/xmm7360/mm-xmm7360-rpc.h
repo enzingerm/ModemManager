@@ -481,10 +481,31 @@ typedef enum {
     UtaMsNetLdrApnParametersChangeIndCb = 0x1c7,
 } Xmm7360RpcUnsolIds;
 
+typedef struct {
+    enum {
+        BYTE,
+        SHORT,
+        LONG,
+        STRING
+    } type;
+    guint size;
+    union {
+        gint8 b;
+        gint16 s;
+        gint32 l;
+        gchar* string; 
+    } value;
+} rpc_arg;
+
+/**
+ * Pack a list of values according to a format
+ */
+GByteArray* pack(guint count, rpc_arg* args);
+
 /**
  * Pack a string into a byte array
  */
-void pack_string(GByteArray* target, GBytes* val, gchar* fmt);
+void pack_string(GByteArray* target, guint8* data, gsize val_len, guint length);
 
 /**
  * Encode a integer

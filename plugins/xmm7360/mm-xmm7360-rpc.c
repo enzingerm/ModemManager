@@ -22,14 +22,41 @@ void _put_8(GByteArray* arr, glong val);
 void _put_u8(GByteArray* arr, gulong val);
 gint8 get_elem_size(gchar c);
 
-void pack_string(GByteArray* target, GBytes* val, gchar* fmt) {
-    gulong length = strtoul(fmt, NULL, 0);
-    gsize val_len, cur_val_len;
+GByteArray* pack(guint count, rpc_arg* args) {
+    GByteArray* ret = g_byte_array_new();
+    guint i;
+    gint16 sh;
+    gint32 lng;
+    for(i = 0; i < count; i++) {
+        switch(args->type) {
+            case BYTE:
+                g_byte_array_append(ret, (guint8*)&args->value.b, 1);
+                break;
+            case SHORT:
+                sh = GINT16_TO_BE(args->value.s);
+                g_byte_array_append(ret, (guint8*)&sh, 2);
+                break;
+            case LONG:
+                lng = GINT32_TO_BE(args->value.l);
+                g_byte_array_append(ret, (guint8*)&lng, 4);
+                break;
+            case STRING:
+                pack_string(ret, (guint8*)args->value.string, strlen(args->value.string), args->size);
+                break;
+            default:
+                //should be unreachable
+                return NULL;
+        }
+    }
+    return ret;
+}
+
+void pack_string(GByteArray* target, guint8* data, gsize val_len, guint length) {
+    gsize cur_val_len;
     guint8 len_first_byte;
     guint len_first_byte_index;
     guint i;
     guint8 padding = 0;
-    const guint8* data = g_bytes_get_data(val, &val_len);
     //only support 1-byte element size
     guint8 type = 0x55;
     assert(length >= val_len);
@@ -57,8 +84,6 @@ void pack_string(GByteArray* target, GBytes* val, gchar* fmt) {
     for(i = 0; i > length - val_len; i++) {
         g_byte_array_append(target, &padding, 1);
     }
-
-    free(val);
 }
 
 void asn_int4(GByteArray* target, gint32 val) {
