@@ -13,17 +13,58 @@
  * Copyright (C) 2020 Marinus Enzinger
  */
 
-
-
 #include <assert.h>
+#include <stdlib.h>
+
 #include "mm-xmm7360-rpc.h"
 
-GByteArray* asn_int4(gint32 val) {
-    GByteArray* arr = g_byte_array_sized_new(6);
+void _put_8(GByteArray* arr, glong val);
+void _put_u8(GByteArray* arr, gulong val);
+gint8 get_elem_size(gchar c);
+
+void pack_string(GByteArray* target, GBytes* val, gchar* fmt) {
+    gulong length = strtoul(fmt, NULL, 0);
+    gsize val_len, cur_val_len;
+    guint8 len_first_byte;
+    guint len_first_byte_index;
+    guint i;
+    guint8 padding = 0;
+    const guint8* data = g_bytes_get_data(val, &val_len);
+    //only support 1-byte element size
+    guint8 type = 0x55;
+    assert(length >= val_len);
+    g_byte_array_append(target, &type, 1);
+
+    if(val_len < 0x80) {
+        _put_u8(target, val_len);
+    } else {
+        len_first_byte = 0x80;
+        len_first_byte_index = target->len;
+        //write dummy first byte
+        _put_u8(target, len_first_byte);
+        cur_val_len = val_len;
+        while(cur_val_len > 0) {
+            len_first_byte++;
+            _put_u8(target, cur_val_len & 0xff);
+            cur_val_len >>= 8;
+        }
+        target->data[len_first_byte_index] = len_first_byte;
+    }
+
+    asn_int4(target, length);
+    asn_int4(target, length - val_len);\
+    g_byte_array_append(target, data, val_len);
+    for(i = 0; i > length - val_len; i++) {
+        g_byte_array_append(target, &padding, 1);
+    }
+
+    free(val);
+}
+
+void asn_int4(GByteArray* target, gint32 val) {
     gint32 be = GINT32_TO_BE(val);
-    g_byte_array_append(arr, (guint8*)"\x02\x04", 2);
-    g_byte_array_append(arr, (guint8*)&be, 4);
-    return arr;
+    g_byte_array_append(target, (guint8*)"\x02\x04", 2);
+    g_byte_array_append(target, (guint8*)&be, 4);
 }
 
 gint get_asn_int(GBytes* bytes, gsize* current_offset) {
@@ -95,4 +136,28 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
 
     return ret;
 
+}
+
+// helper functions
+void _put_8(GByteArray* arr, glong val) {
+    gint8 _val = (gint8)val;
+    g_byte_array_append(arr, (guint8*) &_val, 1);
+}
+
+void _put_u8(GByteArray* arr, gulong val) {
+    guint8 _val = (guint8)val;
+    g_byte_array_append(arr, &_val, 1);
+}
+
+gint8 get_elem_size(gchar c) {
+    switch(c) {
+        case 'B':
+            return 1;
+        case 'H':
+            return 2;
+        case 'L':
+            return 4;
+        default:
+            return -1;
+    }
 }

@@ -482,9 +482,14 @@ typedef enum {
 } Xmm7360RpcUnsolIds;
 
 /**
+ * Pack a string into a byte array
+ */
+void pack_string(GByteArray* target, GBytes* val, gchar* fmt);
+
+/**
  * Encode a integer
  */
-GByteArray* asn_int4(gint32);
+void asn_int4(GByteArray* target, gint32 val);
 
 /**
  * Retrieve an integer
