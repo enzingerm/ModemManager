@@ -186,3 +186,197 @@ gint8 get_elem_size(gchar c) {
             return -1;
     }
 }
+
+GByteArray* pack_uta_ms_call_ps_connect_req(void) {
+    return pack(4, (rpc_arg[]) {
+        { .type = BYTE, .value = { .b = 0 } },
+        { .type = LONG, .value = { .l = 6 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+    });
+}
+
+GByteArray* pack_uta_ms_call_ps_get_negotiated_dns_req(void) {
+    return pack(3, (rpc_arg[]) {
+        { .type = BYTE, .value = { .b = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+    });
+}
+
+GByteArray* pack_uta_ms_call_ps_get_get_ip_addr_req(void) {
+    return pack(3, (rpc_arg[]) {
+        { .type = BYTE, .value = { .b = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+    });
+}
+
+GByteArray* pack_uta_ms_net_attach_req(void) {
+    return pack(9, (rpc_arg[]) {
+        { .type = BYTE, .value = { .b = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = SHORT, .value = { .s = 0xffff } },
+        { .type = SHORT, .value = { .s = 0xffff } },
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 0 } },
+    });
+}
+
+GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void) {
+    return pack(1, (rpc_arg[]) {
+        {
+            .type = STRING,
+            .size=24,
+            .value = { .string = "/sioscc/PCIE/IOSM/IPS/0" }
+        },
+    });
+}
+
+GByteArray* pack_uta_sys_get_info(gint index) {
+    return pack(3, (rpc_arg[]) {
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = STRING, .size = 0, .value = { .string = "" } },
+        { .type = LONG, .value = { .l = index } },
+    });
+}
+
+GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
+    gchar zeroes[270] = { 0 };
+    return pack(131, (rpc_arg[]) {
+        {  .type = BYTE, .value = { .b = 0 } },
+        {  .type = STRING, .size = 260, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 66, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 65, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 250, .value = { .string = zeroes } },
+        {  .type = BYTE, .value = { .b = 0 } },
+        {  .type = STRING, .size = 252, .value = { .string = zeroes } },
+        {  .type = SHORT, .value = { .s = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 20, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 104, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 260, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 66, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 65, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 250, .value = { .string = zeroes } },
+        {  .type = BYTE, .value = { .b = 0 } },
+        {  .type = STRING, .size = 252, .value = { .string = zeroes } },
+        {  .type = SHORT, .value = { .s = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 20, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 104, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 260, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 66, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 65, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 250, .value = { .string = zeroes } },
+        {  .type = BYTE, .value = { .b = 0 } },
+        {  .type = STRING, .size = 252, .value = { .string = zeroes } },
+        {  .type = SHORT, .value = { .s = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0x404 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 20, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 3 } },
+        {  .type = STRING, .size = 104, .value = { .string = apn } },
+        {  .type = STRING, .size = 260, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 66, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 65, .value = { .string = zeroes } },
+        {  .type = STRING, .size = 250, .value = { .string = zeroes } },
+        {  .type = BYTE, .value = { .b = 0 } },
+        {  .type = STRING, .size = 252, .value = { .string = zeroes } },
+        {  .type = SHORT, .value = { .s = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0x404 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 1 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = LONG, .value = { .l = 0 } },
+        {  .type = STRING, .size = 20, .value = { .string = zeroes } },
+        {  .type = LONG, .value = { .l = 3 } },
+        {  .type = STRING, .size = 103, .value = { .string = apn } },
+        {  .type = BYTE, .value = { .b = 3 } },
+        {  .type = LONG, .value = { .l = 0 } },
+    });
+}

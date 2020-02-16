@@ -493,7 +493,7 @@ typedef struct {
         gint8 b;
         gint16 s;
         gint32 l;
-        gchar* string; 
+        const gchar* string; 
     } value;
 } rpc_arg;
 
@@ -521,5 +521,19 @@ gint get_asn_int(GBytes* bytes, gsize* current_offset);
  * Retrieve an encoded string
  */
 GBytes* get_string(GBytes* bytes, gsize* current_offset);
+
+GByteArray* pack_uta_ms_call_ps_connect_req(void);
+
+GByteArray* pack_uta_ms_call_ps_get_negotiated_dns_req(void);
+
+GByteArray* pack_uta_ms_call_ps_get_get_ip_addr_req(void);
+
+GByteArray* pack_uta_ms_net_attach_req(void);
+
+GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void);
+
+GByteArray* pack_uta_sys_get_info(gint index);
+
+GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn);
 
 #endif /* MM_XMM7360_RPC_H */
