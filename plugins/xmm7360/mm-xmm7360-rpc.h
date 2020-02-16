@@ -498,11 +498,6 @@ typedef struct {
 } rpc_arg;
 
 /**
- * Pack a list of values according to a format
- */
-GByteArray* pack(guint count, rpc_arg* args);
-
-/**
  * Pack a string into a byte array
  */
 void pack_string(GByteArray* target, guint8* data, gsize val_len, guint length);
@@ -522,6 +517,14 @@ gint get_asn_int(GBytes* bytes, gsize* current_offset);
  */
 GBytes* get_string(GBytes* bytes, gsize* current_offset);
 
+/**
+ * ##########################
+ * Argument packing functions
+ * ##########################
+ */
+
+GByteArray* pack(guint count, rpc_arg* args);
+
 GByteArray* pack_uta_ms_call_ps_connect_req(void);
 
 GByteArray* pack_uta_ms_call_ps_get_negotiated_dns_req(void);
@@ -535,5 +538,16 @@ GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void);
 GByteArray* pack_uta_sys_get_info(gint index);
 
 GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn);
+
+/**
+ * Argument unpacking functions
+ */
+
+//unpacked strings live as long as data is not freed
+gboolean unpack(GBytes* data, guint count, rpc_arg* args);
+
+gboolean unpack_uta_ms_call_ps_get_neg_ip_addr_req(GBytes* data, guint32* ip1, guint32* ip2, guint32* ip3);
+
+gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, guint32* ipv4_2);
 
 #endif /* MM_XMM7360_RPC_H */

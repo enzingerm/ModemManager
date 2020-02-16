@@ -27,7 +27,7 @@ GByteArray* pack(guint count, rpc_arg* args) {
     guint i;
     gint16 sh;
     gint32 lng;
-    for(i = 0; i < count; i++) {
+    for(i = 0; i < count; i++, args++) {
         switch(args->type) {
             case BYTE:
                 g_byte_array_append(ret, (guint8*)&args->value.b, 1);
@@ -109,8 +109,6 @@ gint get_asn_int(GBytes* bytes, gsize* current_offset) {
         val |= *data++;
     } while(--size > 0);
 
-    g_free(bytes);
-
     return val;
 }
 
@@ -157,10 +155,8 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
     *current_offset += (value + padding);
     assert(len >= *current_offset);
     ret = g_bytes_new_from_bytes(bytes, *current_offset, value);
-    g_free(bytes);
 
     return ret;
-
 }
 
 // helper functions
@@ -379,4 +375,100 @@ GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
         {  .type = BYTE, .value = { .b = 3 } },
         {  .type = LONG, .value = { .l = 0 } },
     });
+}
+
+gboolean unpack(GBytes* data, guint count, rpc_arg* args) {
+    guint i;
+    GBytes* string;
+    const guint8 *strdata;
+    gsize strlength;
+    gsize current_offset = 0;
+
+    for(i = 0; i < count; i++, args++) {
+        switch(args->type) {
+            case BYTE:
+                args->value.b = (gint8)get_asn_int(data, &current_offset);
+                break;
+            case SHORT:
+                args->value.s = (gint16)get_asn_int(data, &current_offset);
+                break;
+            case LONG:
+                args->value.l = (gint32)get_asn_int(data, &current_offset);
+                break;
+            case STRING:
+                string = get_string(data, &current_offset);
+                strdata = g_bytes_get_data(string, &strlength);
+                args->value.string = (const gchar*)strdata;
+                args->size = strlength;
+                break;
+            default:
+                //should be unreachable
+                return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+
+gboolean unpack_uta_ms_call_ps_get_neg_ip_addr_req(GBytes* data, guint32* ip1, guint32* ip2, guint32* ip3) {
+    rpc_arg* ip_arg;
+    guint32* ip_ptr;
+    rpc_arg args[] = {
+        { .type = LONG },
+        { .type = STRING },
+        { .type = LONG },
+        { .type = LONG },
+        { .type = LONG },
+        { .type = LONG },
+    };
+    if(!unpack(data, 6, args)) {
+        return FALSE;
+    }
+    ip_arg = args + 1;
+    assert(ip_arg->size >= 12);
+    ip_ptr = (guint32*)ip_arg->value.string;
+    *ip1 = ip_ptr[0];
+    *ip2 = ip_ptr[1];
+    *ip3 = ip_ptr[2];
+    return TRUE;
+}
+
+gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, guint32* ipv4_2) {
+    guint i;
+    rpc_arg* dns_args;
+    rpc_arg args[] = {
+        { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
+        { .type = LONG },
+        { .type = STRING },
+        { .type = LONG },
+        { .type = LONG },
+        { .type = LONG },
+        { .type = LONG },
+    };
+    if(!unpack(data, G_N_ELEMENTS(args), args)) {
+        return FALSE;
+    }
+    *ipv4_1 = 0;
+    *ipv4_2 = 0;
+    dns_args = args + 1;
+    for(i = 0; i < 16; i += 2) {
+        // check for IPv4
+        if(dns_args[i + 1].value.l == 1) {
+            assert(dns_args[i].size >= 4);
+            if(*ipv4_1 == 0) {
+                *ipv4_1 = *((guint32*)dns_args[i].value.string);
+            } else {
+                *ipv4_2 = *((guint32*)dns_args[i].value.string);
+                return TRUE;
+            }
+        }
+    }
+    return TRUE;
 }
