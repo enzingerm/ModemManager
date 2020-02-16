@@ -184,32 +184,35 @@ gint8 get_elem_size(gchar c) {
 }
 
 GByteArray* pack_uta_ms_call_ps_connect_req(void) {
-    return pack(4, (rpc_arg[]) {
+    rpc_arg args[] = {
         { .type = BYTE, .value = { .b = 0 } },
         { .type = LONG, .value = { .l = 6 } },
         { .type = LONG, .value = { .l = 0 } },
         { .type = LONG, .value = { .l = 0 } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 GByteArray* pack_uta_ms_call_ps_get_negotiated_dns_req(void) {
-    return pack(3, (rpc_arg[]) {
+    rpc_arg args[] = {
         { .type = BYTE, .value = { .b = 0 } },
         { .type = LONG, .value = { .l = 0 } },
         { .type = LONG, .value = { .l = 0 } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 GByteArray* pack_uta_ms_call_ps_get_get_ip_addr_req(void) {
-    return pack(3, (rpc_arg[]) {
+    rpc_arg args[] = {
         { .type = BYTE, .value = { .b = 0 } },
         { .type = LONG, .value = { .l = 0 } },
         { .type = LONG, .value = { .l = 0 } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 GByteArray* pack_uta_ms_net_attach_req(void) {
-    return pack(9, (rpc_arg[]) {
+    rpc_arg args[] = {
         { .type = BYTE, .value = { .b = 0 } },
         { .type = LONG, .value = { .l = 0 } },
         { .type = LONG, .value = { .l = 0 } },
@@ -219,7 +222,8 @@ GByteArray* pack_uta_ms_net_attach_req(void) {
         { .type = SHORT, .value = { .s = 0xffff } },
         { .type = LONG, .value = { .l = 0 } },
         { .type = LONG, .value = { .l = 0 } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void) {
@@ -233,16 +237,17 @@ GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void) {
 }
 
 GByteArray* pack_uta_sys_get_info(gint index) {
-    return pack(3, (rpc_arg[]) {
+    rpc_arg args[] = {
         { .type = LONG, .value = { .l = 0 } },
         { .type = STRING, .size = 0, .value = { .string = "" } },
         { .type = LONG, .value = { .l = index } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
     gchar zeroes[270] = { 0 };
-    return pack(131, (rpc_arg[]) {
+    rpc_arg args[] = {
         {  .type = BYTE, .value = { .b = 0 } },
         {  .type = STRING, .size = 260, .value = { .string = zeroes } },
         {  .type = LONG, .value = { .l = 0 } },
@@ -374,7 +379,8 @@ GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
         {  .type = STRING, .size = 103, .value = { .string = apn } },
         {  .type = BYTE, .value = { .b = 3 } },
         {  .type = LONG, .value = { .l = 0 } },
-    });
+    };
+    return pack(G_N_ELEMENTS(args), args);
 }
 
 gboolean unpack(GBytes* data, guint count, rpc_arg* args) {
@@ -421,7 +427,7 @@ gboolean unpack_uta_ms_call_ps_get_neg_ip_addr_req(GBytes* data, guint32* ip1, g
         { .type = LONG },
         { .type = LONG },
     };
-    if(!unpack(data, 6, args)) {
+    if(!unpack(data, G_N_ELEMENTS(args), args)) {
         return FALSE;
     }
     ip_arg = args + 1;
