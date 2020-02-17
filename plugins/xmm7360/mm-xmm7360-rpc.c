@@ -15,12 +15,56 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <fcntl.h>
 
 #include "mm-xmm7360-rpc.h"
+#include "mm-xmm7360-rpc-enums-types.h"
 
 void _put_8(GByteArray* arr, glong val);
 void _put_u8(GByteArray* arr, gulong val);
 gint8 get_elem_size(gchar c);
+
+int xmm7360_rpc_init(xmm7360_rpc* rpc) {
+    int fd = open("/dev/xmm0/rpc", O_RDWR | O_SYNC);
+    if(fd < 0) {
+        return -1;
+    }
+    rpc->fd = fd;
+    rpc->attach_allowed = FALSE;
+    return 0;
+}
+
+int xmm7360_rpc_pump(xmm7360_rpc* rpc, gboolean is_async, gboolean have_ack, guint32 tid_word) {
+    //TODO: implement
+    return 0;
+}
+
+int xmm7360_rpc_execute(xmm7360_rpc* rpc, gboolean is_async, GByteArray* body, rpc_message* res_ptr) {
+    //TODO: implement
+    return 0;
+}
+
+int xmm7360_rpc_handle_message(xmm7360_rpc* rpc, GBytes* message, rpc_message* res_ptr) {
+    //TODO: implement
+    return 0;
+}
+
+int xmm7360_rpc_handle_unsolicited(xmm7360_rpc* rpc, rpc_message* message) {
+    rpc_arg* attach_argument;
+
+    if(g_strcmp0(
+        xmm_7360_rpc_unsol_ids_get_string((Xmm7360RpcUnsolIds)message->code),
+        "UtaMsNetIsAttachAllowedIndCb"
+    ) == 0) {
+        if(message->content->len <= 2) {
+            //TODO: print error
+            return -1;
+        }
+        attach_argument = &g_array_index(message->content, rpc_arg, 2);
+        rpc->attach_allowed = GET_RPC_INT(attach_argument);
+    }
+    return 0;
+}
 
 GByteArray* pack(guint count, rpc_arg* args) {
     GByteArray* ret = g_byte_array_new();

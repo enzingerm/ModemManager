@@ -481,6 +481,7 @@ typedef enum {
     UtaMsNetLdrApnParametersChangeIndCb = 0x1c7,
 } Xmm7360RpcUnsolIds;
 
+#define GET_RPC_INT(arg) (arg->type == BYTE ? arg->value.b : arg->type == SHORT ? arg->value.s : arg->type == LONG ? arg->value.l : -1)
 typedef struct {
     enum {
         BYTE,
@@ -496,6 +497,37 @@ typedef struct {
         const gchar* string; 
     } value;
 } rpc_arg;
+
+typedef struct {
+    guint32 tx_id;
+    enum {
+        RESPONSE,
+        ASYNC_ACK,
+        UNSOLICITED
+    } type;
+    guint32 code;
+    GBytes *body;
+    //contains rpc_args
+    GArray* content;
+} rpc_message;
+
+typedef struct {
+    gboolean attach_allowed;
+    int fd;
+} xmm7360_rpc;
+
+/**
+ * RPC Communication functions
+ */
+int xmm7360_rpc_init(xmm7360_rpc* rpc);
+
+int xmm7360_rpc_pump(xmm7360_rpc* rpc, gboolean is_async, gboolean have_ack, guint32 tid_word);
+
+int xmm7360_rpc_execute(xmm7360_rpc* rpc, gboolean is_async, GByteArray* body, rpc_message* res_ptr);
+
+int xmm7360_rpc_handle_message(xmm7360_rpc* rpc, GBytes* message, rpc_message* res_ptr);
+
+int xmm7360_rpc_handle_unsolicited(xmm7360_rpc* rpc, rpc_message* message);
 
 /**
  * Pack a string into a byte array
