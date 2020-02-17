@@ -1124,7 +1124,7 @@ xmm7360/mm-xmm7360-rpc-enums-types.h: Makefile.am $(XMM7360_ENUMS_INPUTS) $(top_
 	$(AM_V_GEN) \
 		$(MKDIR_P) xmm7360; \
 		$(GLIB_MKENUMS) \
-			--fhead "#include \"mm-modem-helpers-xmm7360.h\"\n#ifndef __MM_XMM7360_ENUMS_TYPES_H__\n#define __MM_XMM7360_ENUMS_TYPES_H__\n" \
+			--fhead "#include \"mm-xmm7360-rpc.h\"\n#ifndef __MM_XMM7360_ENUMS_TYPES_H__\n#define __MM_XMM7360_ENUMS_TYPES_H__\n" \
 			--template $(top_srcdir)/build-aux/mm-enums-template.h \
 			--ftail "#endif /* __MM_XMM7360_ENUMS_TYPES_H__ */\n" \
 			$(XMM7360_ENUMS_INPUTS) > $@
