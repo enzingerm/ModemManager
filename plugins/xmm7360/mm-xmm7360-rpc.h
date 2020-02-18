@@ -511,6 +511,10 @@ typedef struct {
     GArray* content;
 } rpc_message;
 
+rpc_message* xmm7360_rpc_alloc_message(void);
+
+void xmm7360_rpc_free_message(rpc_message* msg);
+
 typedef struct {
     gboolean attach_allowed;
     int fd;

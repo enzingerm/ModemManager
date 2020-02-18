@@ -34,6 +34,19 @@ int xmm7360_rpc_init(xmm7360_rpc* rpc) {
     return 0;
 }
 
+rpc_message* xmm7360_rpc_alloc_message(void) {
+    GArray* response_arr = g_array_new(FALSE, TRUE, sizeof(rpc_arg));
+    rpc_message* msg = g_new0(rpc_message, 1);
+    msg->content = response_arr;
+    return msg;
+}
+
+void xmm7360_rpc_free_message(rpc_message* msg) {
+    g_array_free(msg->content, TRUE);
+    g_bytes_unref(msg->body);
+    g_free(msg);
+}
+
 int xmm7360_rpc_pump(xmm7360_rpc* rpc, gboolean is_async, gboolean have_ack, guint32 tid_word) {
     //TODO: implement
     return 0;
