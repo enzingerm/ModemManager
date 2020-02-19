@@ -58,8 +58,57 @@ int xmm7360_rpc_execute(xmm7360_rpc* rpc, gboolean is_async, GByteArray* body, r
 }
 
 int xmm7360_rpc_handle_message(xmm7360_rpc* rpc, GBytes* message, rpc_message* res_ptr) {
-    //TODO: implement
+    gsize message_size;
+    gsize current_offset;
+    const guint8* data = g_bytes_get_data(message, &message_size);
+    gint32 txid;
+    rpc_arg* txid_arg;
+
+    assert(message_size > 20);
+    assert(data[4] == 0x02 && data[5] == 0x04);
+    assert(data[10] == 0x02 && data[11] == 0x04);
+
+    current_offset = 4;
+    if(*(gint32*)data != get_asn_int(message, &current_offset)) {
+        //TODO: printf("length mismatch, framing error?\n");
+        goto err;
+    }
+    res_ptr->code = get_asn_int(message, &current_offset);
+    res_ptr->body = g_bytes_new_from_bytes(message, 20, message_size - 20);
+    if(unpack_unknown(res_ptr->body, res_ptr->content) != 0) {
+        //TODO print error
+        goto err;
+    }
+    txid = GINT32_FROM_BE(*(gint32*)data + 16);
+    res_ptr->tx_id = txid;
+    if(txid == 0x11000100) {
+        res_ptr->type = RESPONSE;
+        //TODO check if signedness leads to problems here
+    } else if((txid & 0xffffff00) == 0x11000100) {
+        if(res_ptr->code >= 2000) {
+            res_ptr->type = ASYNC_ACK;
+        } else {
+            res_ptr->type = RESPONSE;
+            //assert first element in content is txid
+            txid_arg = &g_array_index(res_ptr->content, rpc_arg, 0);
+            if(txid_arg->type != LONG || GET_RPC_INT(txid_arg) != txid) {
+                goto err;
+            }
+            g_array_remove_index(res_ptr->content, 0);
+            //jump over first six bytes (asn int of txid)
+            g_bytes_unref(res_ptr->body);
+            res_ptr->body = g_bytes_new_from_bytes(message, 26, message_size - 26);
+        }
+    } else {
+        res_ptr->type = UNSOLICITED;
+    }
+
+    g_bytes_unref(message);
     return 0;
+
+err:
+    g_bytes_unref(message);
+    return -1;
 }
 
 int xmm7360_rpc_handle_unsolicited(xmm7360_rpc* rpc, rpc_message* message) {
@@ -443,7 +492,7 @@ GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
 int unpack_unknown(GBytes* message, GArray* args_array) {
     gsize current_offset = 0;
     gsize data_len;
-    guint8* data;
+    const guint8* data;
     GBytes* taken_string;
     rpc_arg cur_arg = { 0 };
     assert(message != NULL && args_array != NULL);
