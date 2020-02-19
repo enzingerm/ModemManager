@@ -16,9 +16,12 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #include "mm-xmm7360-rpc.h"
 #include "mm-xmm7360-rpc-enums-types.h"
+
+#define MAX_READ_SIZE (131072)
 
 void _put_8(GByteArray* arr, glong val);
 void _put_u8(GByteArray* arr, gulong val);
@@ -47,13 +50,69 @@ void xmm7360_rpc_free_message(rpc_message* msg) {
     g_free(msg);
 }
 
-int xmm7360_rpc_pump(xmm7360_rpc* rpc, gboolean is_async, gboolean have_ack, guint32 tid_word) {
-    //TODO: implement
+int xmm7360_rpc_pump(xmm7360_rpc* rpc, rpc_message** response_ptr) {
+    GByteArray* response_msg = g_byte_array_sized_new(MAX_READ_SIZE);
+    GBytes* response_msg_data;
+    rpc_message *response;
+    int read_bytes = read(rpc->fd, (void*)response_msg->data, MAX_READ_SIZE);
+    assert(read_bytes > 0);
+    response_msg->len = read_bytes;
+    response_msg_data = g_byte_array_free_to_bytes(response_msg);
+    response = *response_ptr = xmm7360_rpc_alloc_message();
+    if(xmm7360_rpc_handle_message(rpc, response_msg_data, *response_ptr) != 0) {
+        return -1;
+    }
+    if(response->type == UNSOLICITED) {
+        //TODO printf unsolicited
+        xmm7360_rpc_handle_unsolicited(rpc, response);
+    }
+    
     return 0;
 }
 
-int xmm7360_rpc_execute(xmm7360_rpc* rpc, gboolean is_async, GByteArray* body, rpc_message* res_ptr) {
-    //TODO: implement
+int xmm7360_rpc_execute(xmm7360_rpc* rpc, Xmm7360RpcCallIds cmd, gboolean is_async, GByteArray* body, rpc_message** res_ptr) {
+    gint32 tid, tid_word;
+    gint32 tid_word_be;
+    guint32 total_len;
+    rpc_message* pump_response;
+    int written;
+    GByteArray* header = g_byte_array_sized_new(22);
+    if(is_async) {
+        tid = 0x11000101;
+    } else {
+        tid = 0;
+    }
+    tid_word = 0x11000100 | tid;
+    total_len = body->len + 16;
+    if(tid) {
+        total_len += 6;
+    }
+    g_byte_array_append(header, (guint8*)&total_len, 4);
+    asn_int4(header, total_len);
+    asn_int4(header, cmd);
+    tid_word_be = GINT32_TO_BE(tid_word);
+    g_byte_array_append(header, (guint8*)&tid_word_be, 4);
+
+    assert(total_len == header->len + body->len - 4);
+    g_byte_array_append(header, body->data, body->len);
+    g_byte_array_free(body, TRUE);
+    written = write(rpc->fd, header->data, header->len);
+    if(written != (int)header->len) {
+        //TODO: write error
+        return -1;
+    }
+
+    while(TRUE) {
+        if(xmm7360_rpc_pump(rpc, &pump_response) != 0) {
+            return -1;
+        }
+        if(pump_response->type == RESPONSE) {
+            *res_ptr = pump_response;
+            break;
+        }
+        xmm7360_rpc_free_message(pump_response);
+    }
+
     return 0;
 }
 

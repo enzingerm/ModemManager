@@ -525,9 +525,9 @@ typedef struct {
  */
 int xmm7360_rpc_init(xmm7360_rpc* rpc);
 
-int xmm7360_rpc_pump(xmm7360_rpc* rpc, gboolean is_async, gboolean have_ack, guint32 tid_word);
+int xmm7360_rpc_pump(xmm7360_rpc* rpc, rpc_message** response_ptr);
 
-int xmm7360_rpc_execute(xmm7360_rpc* rpc, gboolean is_async, GByteArray* body, rpc_message* res_ptr);
+int xmm7360_rpc_execute(xmm7360_rpc* rpc, Xmm7360RpcCallIds cmd, gboolean is_async, GByteArray* body, rpc_message** res_ptr);
 
 int xmm7360_rpc_handle_message(xmm7360_rpc* rpc, GBytes* message, rpc_message* res_ptr);
 
