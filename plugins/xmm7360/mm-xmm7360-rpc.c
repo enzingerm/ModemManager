@@ -60,8 +60,12 @@ int xmm7360_rpc_pump(xmm7360_rpc* rpc, rpc_message** response_ptr) {
     assert(read_bytes > 0);
     response_msg->len = read_bytes;
     response_msg_data = g_byte_array_free_to_bytes(response_msg);
-    response = *response_ptr = xmm7360_rpc_alloc_message();
-    if(xmm7360_rpc_handle_message(rpc, response_msg_data, *response_ptr) != 0) {
+    response = xmm7360_rpc_alloc_message();
+    if(response_ptr != NULL) {
+        *response_ptr = response;
+    }
+    if(xmm7360_rpc_handle_message(rpc, response_msg_data, response) != 0) {
+        xmm7360_rpc_free_message(response);
         return -1;
     }
     if(response->type == UNSOLICITED) {
@@ -69,6 +73,9 @@ int xmm7360_rpc_pump(xmm7360_rpc* rpc, rpc_message** response_ptr) {
         xmm7360_rpc_handle_unsolicited(rpc, response);
     }
     
+    if(response_ptr == NULL) {
+        xmm7360_rpc_free_message(response);
+    }
     return 0;
 }
 
@@ -114,6 +121,10 @@ int xmm7360_rpc_execute(xmm7360_rpc* rpc, Xmm7360RpcCallIds cmd, gboolean is_asy
             return -1;
         }
         if(pump_response->type == RESPONSE) {
+            if(res_ptr == NULL) {
+                xmm7360_rpc_free_message(pump_response);
+                return 0;
+            }
             *res_ptr = pump_response;
             break;
         }
