@@ -45,9 +45,11 @@ rpc_message* xmm7360_rpc_alloc_message(void) {
 }
 
 void xmm7360_rpc_free_message(rpc_message* msg) {
-    g_array_free(msg->content, TRUE);
-    g_bytes_unref(msg->body);
-    g_free(msg);
+    if(msg != NULL) {
+        g_array_free(msg->content, TRUE);
+        g_bytes_unref(msg->body);
+        g_free(msg);
+    }
 }
 
 int xmm7360_rpc_pump(xmm7360_rpc* rpc, rpc_message** response_ptr) {
@@ -77,6 +79,11 @@ int xmm7360_rpc_execute(xmm7360_rpc* rpc, Xmm7360RpcCallIds cmd, gboolean is_asy
     rpc_message* pump_response;
     int written;
     GByteArray* header = g_byte_array_sized_new(22);
+    //default argument
+    if(body == NULL) {
+        body = g_byte_array_new();
+        asn_int4(body, 0);
+    }
     if(is_async) {
         tid = 0x11000101;
     } else {
@@ -173,10 +180,7 @@ err:
 int xmm7360_rpc_handle_unsolicited(xmm7360_rpc* rpc, rpc_message* message) {
     rpc_arg* attach_argument;
 
-    if(g_strcmp0(
-        xmm_7360_rpc_unsol_ids_get_string((Xmm7360RpcUnsolIds)message->code),
-        "UtaMsNetIsAttachAllowedIndCb"
-    ) == 0) {
+    if((Xmm7360RpcUnsolIds)message->code == UtaMsNetIsAttachAllowedIndCb) {
         if(message->content->len <= 2) {
             //TODO: print error
             return -1;
@@ -677,4 +681,77 @@ gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, gu
         }
     }
     return TRUE;
+}
+
+int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc) {
+    rpc_message *msg = NULL;
+    rpc_arg* arg;
+    GChecksum* checksum;
+    guchar key[] = { 0x3d, 0xf8, 0xc7, 0x19 };
+    gsize digest_len = 32;
+    guint8 digest[32] = { 0 };
+    gint32 fcc_chal;
+    GByteArray* digest_response;
+
+    if(xmm7360_rpc_execute(rpc, CsiFccLockQueryReq, TRUE, NULL, &msg) != 0) {
+        goto err;
+    }
+
+    if(msg->content->len < 3) {
+        goto err;
+    }
+    //second argument is fcc_state
+    arg = &g_array_index(msg->content, rpc_arg, 1);
+    assert(arg->type == LONG);
+    // if fcc stat is not 0 -> return
+    if(GET_RPC_INT(arg)) {
+        goto success;
+    }
+    //third argument is fcc_mode
+    arg++;
+    assert(arg->type == LONG);
+    // if fcc_mode is 0 -> return
+    if(!GET_RPC_INT(arg)) {
+        goto success;
+    }
+    xmm7360_rpc_free_message(msg);
+    msg = NULL;
+    if(xmm7360_rpc_execute(rpc, CsiFccLockGenChallengeReq, TRUE, NULL, &msg) != 0) {
+        goto err;
+    }
+    if(msg->content->len < 2) {
+        goto err;
+    }
+    arg = &g_array_index(msg->content, rpc_arg, 1);
+    assert(arg->type == LONG);
+    fcc_chal = GET_RPC_INT(arg);
+    xmm7360_rpc_free_message(msg);
+    checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    g_checksum_update(checksum, (guchar*)&fcc_chal, 4);
+    g_checksum_update(checksum, key, 4);
+    g_checksum_get_digest(checksum, digest, &digest_len);
+    g_checksum_free(checksum);
+    digest_response = g_byte_array_new();
+    asn_int4(digest_response, GINT32_FROM_LE(*(gint32*)digest));
+
+    //send back digest
+    if(xmm7360_rpc_execute(rpc, CsiFccLockVerChallengeReq, TRUE, digest_response, &msg) != 0) {
+        goto err;
+    }
+    if(msg->content->len < 1) {
+        goto err;
+    }
+    arg = &g_array_index(msg->content, rpc_arg, 0);
+    assert(arg->type == LONG);
+    if(GET_RPC_INT(arg) != 1) {
+        goto err;
+    }
+
+success:
+    xmm7360_rpc_free_message(msg);
+    return 0;
+
+err:
+    xmm7360_rpc_free_message(msg);
+    return -1;
 }

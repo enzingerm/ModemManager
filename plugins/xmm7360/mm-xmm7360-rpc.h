@@ -588,4 +588,12 @@ gboolean unpack_uta_ms_call_ps_get_neg_ip_addr_req(GBytes* data, guint32* ip1, g
 
 gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, guint32* ipv4_2);
 
+/**
+ * ###########################
+ * Complex RPC functions
+ * ###########################
+ */
+
+int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc);
+
 #endif /* MM_XMM7360_RPC_H */
