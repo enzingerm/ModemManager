@@ -440,6 +440,41 @@ GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
     return pack(G_N_ELEMENTS(args), args);
 }
 
+int unpack_unknown(GBytes* message, GArray* args_array) {
+    gsize current_offset = 0;
+    gsize data_len;
+    guint8* data;
+    GBytes* taken_string;
+    rpc_arg cur_arg = { 0 };
+    assert(message != NULL && args_array != NULL);
+    data = g_bytes_get_data(message, &data_len);
+    while(current_offset < data_len) {
+        cur_arg.size = 0;
+        switch(data[current_offset]) {
+            case 0x02:
+                cur_arg.type = LONG;
+                cur_arg.value.l = get_asn_int(message, &current_offset);
+                break;
+            case 0x55:
+            case 0x56:
+            case 0x57:
+                cur_arg.type = STRING;
+                taken_string = get_string(message, &current_offset);
+                if(taken_string == NULL) {
+                    return -1;
+                }
+                cur_arg.value.string = g_bytes_get_data(taken_string, &cur_arg.size);
+                g_bytes_unref(taken_string);
+                break;
+            default:
+                //TODO error handling
+                return -1;
+        }
+        g_array_append_val(args_array, cur_arg);
+    }
+    return 0;
+}
+
 gboolean unpack(GBytes* data, guint count, rpc_arg* args) {
     guint i;
     GBytes* string;

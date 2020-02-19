@@ -489,7 +489,7 @@ typedef struct {
         LONG,
         STRING
     } type;
-    guint size;
+    gsize size;
     union {
         gint8 b;
         gint16 s;
@@ -578,6 +578,8 @@ GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn);
 /**
  * Argument unpacking functions
  */
+
+int unpack_unknown(GBytes* data, GArray* args_array);
 
 //unpacked strings live as long as data is not freed
 gboolean unpack(GBytes* data, guint count, rpc_arg* args);
