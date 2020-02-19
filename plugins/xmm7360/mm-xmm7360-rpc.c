@@ -414,6 +414,15 @@ GByteArray* pack_uta_sys_get_info(gint index) {
     return pack(G_N_ELEMENTS(args), args);
 }
 
+GByteArray* pack_uta_mode_set(gint32 mode) {
+    rpc_arg args[] = {
+        { .type = LONG, .value = { .l = 0 } },
+        { .type = LONG, .value = { .l = 15 } },
+        { .type = LONG, .value = { .l = mode } },
+    };
+    return pack(G_N_ELEMENTS(args), args);
+}
+
 GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
     gchar zeroes[270] = { 0 };
     rpc_arg args[] = {
@@ -748,6 +757,50 @@ int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc) {
     }
 
 success:
+    xmm7360_rpc_free_message(msg);
+    return 0;
+
+err:
+    xmm7360_rpc_free_message(msg);
+    return -1;
+}
+
+int xmm7360_uta_mode_set(xmm7360_rpc* rpc, gint32 mode) {
+    rpc_message *msg = NULL;
+    rpc_arg* arg;
+    GByteArray* args = pack_uta_mode_set(mode);
+    if(xmm7360_rpc_execute(rpc, UtaModeSetReq, FALSE, args, &msg) != 0) {
+        goto err;
+    }
+    if(msg->content->len < 1) {
+        goto err;
+    }
+    arg = &g_array_index(msg->content, rpc_arg, 0);
+    assert(arg->type == LONG);
+    if(GET_RPC_INT(arg) != 0) {
+        goto err;
+    }
+
+    while(TRUE) {
+        xmm7360_rpc_free_message(msg);
+        msg = NULL;
+        if(xmm7360_rpc_pump(rpc, &msg) != 0) {
+            goto err;
+        }
+        if((Xmm7360RpcUnsolIds)msg->code == UtaModeSetRspCb) {
+            if(msg->content->len < 1) {
+                goto err;
+            }
+            arg = &g_array_index(msg->content, rpc_arg, 0);
+            assert(arg->type == LONG);
+            if(GET_RPC_INT(arg) != mode) {
+                //TODO: mode set unable
+                goto err;
+            }
+            break;
+        }
+    }
+
     xmm7360_rpc_free_message(msg);
     return 0;
 

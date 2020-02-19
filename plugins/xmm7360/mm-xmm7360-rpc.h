@@ -573,6 +573,8 @@ GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void);
 
 GByteArray* pack_uta_sys_get_info(gint index);
 
+GByteArray* pack_uta_mode_set(gint32 mode);
+
 GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn);
 
 /**
@@ -593,6 +595,8 @@ gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, gu
  * Complex RPC functions
  * ###########################
  */
+
+int xmm7360_uta_mode_set(xmm7360_rpc* rpc, gint32 mode);
 
 int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc);
 
