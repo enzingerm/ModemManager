@@ -600,4 +600,6 @@ int xmm7360_uta_mode_set(xmm7360_rpc* rpc, gint32 mode);
 
 int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc);
 
+int xmm7360_net_attach(xmm7360_rpc* rpc, gint32* status_ptr);
+
 #endif /* MM_XMM7360_RPC_H */

@@ -819,3 +819,28 @@ err:
     xmm7360_rpc_free_message(msg);
     return -1;
 }
+
+int xmm7360_net_attach(xmm7360_rpc* rpc, gint32* status_ptr) {
+    rpc_message* message = NULL;
+    rpc_arg* status_arg = NULL;
+
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaMsNetAttachReq,
+        TRUE,
+        pack_uta_ms_net_attach_req(),
+        &message
+    ) != 0) {
+        return -1;
+    }
+
+    if(message->content->len < 2) {
+        xmm7360_rpc_free_message(message);
+        return -1;
+    }
+    status_arg = &g_array_index(message->content, rpc_arg, 1);
+    assert(status_arg->type == LONG);
+    *status_ptr = GET_RPC_INT(status_arg);
+    xmm7360_rpc_free_message(message);
+    return 0;
+}
