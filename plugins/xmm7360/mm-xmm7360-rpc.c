@@ -106,6 +106,9 @@ int xmm7360_rpc_execute(xmm7360_rpc* rpc, Xmm7360RpcCallIds cmd, gboolean is_asy
     asn_int4(header, cmd);
     tid_word_be = GINT32_TO_BE(tid_word);
     g_byte_array_append(header, (guint8*)&tid_word_be, 4);
+    if(tid) {
+        asn_int4(header, tid);
+    }
 
     assert(total_len == header->len + body->len - 4);
     g_byte_array_append(header, body->data, body->len);
@@ -156,7 +159,7 @@ int xmm7360_rpc_handle_message(xmm7360_rpc* rpc, GBytes* message, rpc_message* r
         //TODO print error
         goto err;
     }
-    txid = GINT32_FROM_BE(*(gint32*)data + 16);
+    txid = GINT32_FROM_BE(*(gint32*)(data + 16));
     res_ptr->tx_id = txid;
     if(txid == 0x11000100) {
         res_ptr->type = RESPONSE;
@@ -210,14 +213,17 @@ GByteArray* pack(guint count, rpc_arg* args) {
     for(i = 0; i < count; i++, args++) {
         switch(args->type) {
             case BYTE:
+                g_byte_array_append(ret, (guint8[]){ 0x02, 0x01 }, 2);
                 g_byte_array_append(ret, (guint8*)&args->value.b, 1);
                 break;
             case SHORT:
                 sh = GINT16_TO_BE(args->value.s);
+                g_byte_array_append(ret, (guint8[]){ 0x02, 0x02 }, 2);
                 g_byte_array_append(ret, (guint8*)&sh, 2);
                 break;
             case LONG:
                 lng = GINT32_TO_BE(args->value.l);
+                g_byte_array_append(ret, (guint8[]){ 0x02, 0x04 }, 2);
                 g_byte_array_append(ret, (guint8*)&lng, 4);
                 break;
             case STRING:
@@ -259,9 +265,9 @@ void pack_string(GByteArray* target, guint8* data, gsize val_len, guint length) 
     }
 
     asn_int4(target, length);
-    asn_int4(target, length - val_len);\
+    asn_int4(target, length - val_len);
     g_byte_array_append(target, data, val_len);
-    for(i = 0; i > length - val_len; i++) {
+    for(i = 0; i < length - val_len; i++) {
         g_byte_array_append(target, &padding, 1);
     }
 }
@@ -276,7 +282,7 @@ gint get_asn_int(GBytes* bytes, gsize* current_offset) {
     gint size;
     gint val;
     gsize len;
-    const guchar* data = g_bytes_get_data(bytes, &len);
+    const guchar* data = g_bytes_get_data(bytes, &len) + *current_offset;
     *current_offset += 2;
     assert(len > *current_offset);
     assert(*data++ == 2);
@@ -296,18 +302,20 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
     GBytes *ret;
     gsize len;
     guchar valid;
-    gint value = 0;
+    gint value;
     guchar type;
     gint count;
     gint padding;
-    const guchar* data = g_bytes_get_data(bytes, &len);
+    const guchar* data = g_bytes_get_data(bytes, &len) + *current_offset;
     *current_offset += 2;
     assert(len > *current_offset);
     type = *data++;
     valid = *data++;
+    value = valid;
 
     assert(type == 0x55 || type == 0x56 || type == 0x57);
     if(valid & 0x80) {
+        value = 0;
         guchar bytelen = valid & 0xf;
         assert(bytelen <= 4);
         *current_offset += bytelen;
@@ -334,7 +342,7 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
 
     *current_offset += (value + padding);
     assert(len >= *current_offset);
-    ret = g_bytes_new_from_bytes(bytes, *current_offset, value);
+    ret = g_bytes_new_from_bytes(bytes, *current_offset - value, value);
 
     return ret;
 }
@@ -668,6 +676,7 @@ gboolean unpack_uta_ms_call_ps_get_neg_dns_req(GBytes* data, guint32* ipv4_1, gu
     rpc_arg* dns_args;
     rpc_arg args[] = {
         { .type = LONG },
+        { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
         { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
         { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
         { .type = STRING }, { .type = LONG }, { .type = STRING }, { .type = LONG },
