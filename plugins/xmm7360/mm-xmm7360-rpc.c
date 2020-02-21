@@ -853,3 +853,50 @@ int xmm7360_net_attach(xmm7360_rpc* rpc, gint32* status_ptr) {
     xmm7360_rpc_free_message(message);
     return 0;
 }
+
+int xmm7360_get_ip_and_dns(xmm7360_rpc* rpc, xmm7360_ip_config* ip_config) {
+    rpc_message* message = NULL;
+    assert(ip_config != NULL);
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaMsCallPsGetNegIpAddrReq,
+        TRUE,
+        pack_uta_ms_call_ps_get_get_ip_addr_req(),
+        &message
+    ) != 0) {
+        goto err;
+    }
+
+    if(!unpack_uta_ms_call_ps_get_neg_ip_addr_req(
+        message->body,
+        &ip_config->ip4_1,
+        &ip_config->ip4_2,
+        &ip_config->ip4_3)
+    ) {
+        goto err;
+    }
+    xmm7360_rpc_free_message(message);
+    message = NULL;
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaMsCallPsGetNegotiatedDnsReq,
+        TRUE,
+        pack_uta_ms_call_ps_get_negotiated_dns_req(),
+        &message
+    ) != 0) {
+        goto err;
+    }
+    if(!unpack_uta_ms_call_ps_get_neg_dns_req(
+        message->body,
+        &ip_config->dns4_1,
+        &ip_config->dns4_2
+    )) {
+        goto err;
+    }
+    xmm7360_rpc_free_message(message);
+    return 0;
+
+err:
+    xmm7360_rpc_free_message(message);
+    return -1;
+}

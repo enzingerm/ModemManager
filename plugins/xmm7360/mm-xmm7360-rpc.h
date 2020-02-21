@@ -520,6 +520,11 @@ typedef struct {
     int fd;
 } xmm7360_rpc;
 
+typedef struct {
+    guint32 ip4_1, ip4_2, ip4_3;
+    guint32 dns4_1, dns4_2;
+} xmm7360_ip_config;
+
 /**
  * RPC Communication functions
  */
@@ -601,5 +606,7 @@ int xmm7360_uta_mode_set(xmm7360_rpc* rpc, gint32 mode);
 int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc);
 
 int xmm7360_net_attach(xmm7360_rpc* rpc, gint32* status_ptr);
+
+int xmm7360_get_ip_and_dns(xmm7360_rpc* rpc, xmm7360_ip_config* ip_config);
 
 #endif /* MM_XMM7360_RPC_H */
