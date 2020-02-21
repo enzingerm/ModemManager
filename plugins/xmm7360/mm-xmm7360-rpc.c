@@ -282,7 +282,8 @@ gint get_asn_int(GBytes* bytes, gsize* current_offset) {
     gint size;
     gint val;
     gsize len;
-    const guchar* data = g_bytes_get_data(bytes, &len) + *current_offset;
+    const guchar* data = g_bytes_get_data(bytes, &len);
+    data += *current_offset;
     *current_offset += 2;
     assert(len > *current_offset);
     assert(*data++ == 2);
@@ -304,9 +305,11 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
     guchar valid;
     gint value;
     guchar type;
+    guchar bytelen;
     gint count;
     gint padding;
-    const guchar* data = g_bytes_get_data(bytes, &len) + *current_offset;
+    const guchar* data = g_bytes_get_data(bytes, &len);
+    data += *current_offset;
     *current_offset += 2;
     assert(len > *current_offset);
     type = *data++;
@@ -316,7 +319,7 @@ GBytes* get_string(GBytes* bytes, gsize *current_offset) {
     assert(type == 0x55 || type == 0x56 || type == 0x57);
     if(valid & 0x80) {
         value = 0;
-        guchar bytelen = valid & 0xf;
+        bytelen = valid & 0xf;
         assert(bytelen <= 4);
         *current_offset += bytelen;
         assert(len > *current_offset);
