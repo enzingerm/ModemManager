@@ -22,6 +22,7 @@
 #include "mm-log.h"
 #include "mm-plugin-xmm7360.h"
 #include "mm-broadband-modem.h"
+#include "mm-broadband-modem-xmm7360.h"
 
 G_DEFINE_TYPE (MMPluginXmm7360, mm_plugin_xmm7360, MM_TYPE_PLUGIN)
 
@@ -39,7 +40,7 @@ create_modem (MMPlugin *self,
               GList *probes,
               GError **error)
 {
-    return MM_BASE_MODEM (mm_broadband_modem_new (uid,
+    return MM_BASE_MODEM (mm_broadband_modem_xmm7360_new (uid,
                                                   drivers,
                                                   mm_plugin_get_name (self),
                                                   vendor,
@@ -65,10 +66,8 @@ mm_plugin_create (void)
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_PRODUCT_IDS, products,
                       MM_PLUGIN_ALLOWED_DRIVERS,    drivers,
-                    //   MM_PLUGIN_ALLOWED_AT,         TRUE,
-                    //   MM_PLUGIN_ALLOWED_QCDM,       TRUE,
-                    //   MM_PLUGIN_ALLOWED_QMI,        TRUE,
-                    //   MM_PLUGIN_ALLOWED_MBIM,       TRUE,
+                      MM_PLUGIN_ALLOWED_AT,         TRUE,
+                      MM_PLUGIN_ALLOWED_XMM, TRUE,
                       NULL));
 }
 

@@ -26,27 +26,35 @@
 #include "mm-iface-modem.h"
 #include "mm-broadband-modem-xmm.h"
 #include "mm-shared-xmm.h"
+#include "mm-broadband-modem-xmm7360.h"
 
 
 static void iface_modem_init (MMIfaceModem *iface);
-static void shared_xmm_init  (MMSharedXmm  *iface);
-static void iface_modem_signal_init (MMIfaceModemSignal *iface);
+// static void shared_xmm_init  (MMSharedXmm  *iface);
+// static void iface_modem_signal_init (MMIfaceModemSignal *iface);
 
-G_DEFINE_TYPE_EXTENDED (MMBroadbandModemXmm, mm_broadband_modem_xmm, MM_TYPE_BROADBAND_MODEM, 0,
-                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
-                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_SIGNAL, iface_modem_signal_init)
-                        G_IMPLEMENT_INTERFACE (MM_TYPE_SHARED_XMM,  shared_xmm_init))
+/* XMM7360 specific bearer creation */
+void xmm7360_create_bearer (MMIfaceModem *self,
+                        MMBearerProperties *properties,
+                        GAsyncReadyCallback callback,
+                        gpointer user_data);
+MMBaseBearer * xmm7360_create_bearer_finish (MMIfaceModem *self,
+                                        GAsyncResult *res,
+                                        GError **error);
+
+G_DEFINE_TYPE_EXTENDED (MMBroadbandModemXmm7360, mm_broadband_modem_xmm7360, MM_TYPE_BROADBAND_MODEM_XMM, 0, 
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init))
 
 /*****************************************************************************/
 
-MMBroadbandModemXmm *
-mm_broadband_modem_xmm_new (const gchar  *device,
+MMBroadbandModemXmm7360 *
+mm_broadband_modem_xmm7360_new (const gchar  *device,
                             const gchar **drivers,
                             const gchar  *plugin,
                             guint16       vendor_id,
                             guint16       product_id)
 {
-    return g_object_new (MM_TYPE_BROADBAND_MODEM_XMM,
+    return g_object_new (MM_TYPE_BROADBAND_MODEM_XMM7360,
                          MM_BASE_MODEM_DEVICE,     device,
                          MM_BASE_MODEM_DRIVERS,    drivers,
                          MM_BASE_MODEM_PLUGIN,     plugin,
@@ -56,64 +64,37 @@ mm_broadband_modem_xmm_new (const gchar  *device,
 }
 
 static void
-mm_broadband_modem_xmm_init (MMBroadbandModemXmm *self)
+mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
 {
+    //TODO: RPC calls to initialize modem
 }
 
 static void
 iface_modem_init (MMIfaceModem *iface)
 {
-    iface->load_supported_modes        = mm_shared_xmm_load_supported_modes;
-    iface->load_supported_modes_finish = mm_shared_xmm_load_supported_modes_finish;
-    iface->load_current_modes          = mm_shared_xmm_load_current_modes;
-    iface->load_current_modes_finish   = mm_shared_xmm_load_current_modes_finish;
-    iface->set_current_modes           = mm_shared_xmm_set_current_modes;
-    iface->set_current_modes_finish    = mm_shared_xmm_set_current_modes_finish;
-
-    iface->load_supported_bands        = mm_shared_xmm_load_supported_bands;
-    iface->load_supported_bands_finish = mm_shared_xmm_load_supported_bands_finish;
-    iface->load_current_bands          = mm_shared_xmm_load_current_bands;
-    iface->load_current_bands_finish   = mm_shared_xmm_load_current_bands_finish;
-    iface->set_current_bands           = mm_shared_xmm_set_current_bands;
-    iface->set_current_bands_finish    = mm_shared_xmm_set_current_bands_finish;
-
-    iface->load_power_state        = mm_shared_xmm_load_power_state;
-    iface->load_power_state_finish = mm_shared_xmm_load_power_state_finish;
-    iface->modem_power_up          = mm_shared_xmm_power_up;
-    iface->modem_power_up_finish   = mm_shared_xmm_power_up_finish;
-    iface->modem_power_down        = mm_shared_xmm_power_down;
-    iface->modem_power_down_finish = mm_shared_xmm_power_down_finish;
-    iface->modem_power_off         = mm_shared_xmm_power_off;
-    iface->modem_power_off_finish  = mm_shared_xmm_power_off_finish;
-    iface->reset                   = mm_shared_xmm_reset;
-    iface->reset_finish            = mm_shared_xmm_reset_finish;
-}
-
-static MMBroadbandModemClass *
-peek_parent_broadband_modem_class (MMSharedXmm *self)
-{
-    return MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_xmm_parent_class);
+    iface->create_bearer = xmm7360_create_bearer;
+    iface->create_bearer_finish = xmm7360_create_bearer_finish;
 }
 
 static void
-iface_modem_signal_init (MMIfaceModemSignal *iface)
+mm_broadband_modem_xmm7360_class_init (MMBroadbandModemXmm7360Class *klass)
 {
-    iface->check_support        = mm_shared_xmm_signal_check_support;
-    iface->check_support_finish = mm_shared_xmm_signal_check_support_finish;
-    iface->load_values          = mm_shared_xmm_signal_load_values;
-    iface->load_values_finish   = mm_shared_xmm_signal_load_values_finish;
+
 }
 
-static void
-shared_xmm_init (MMSharedXmm *iface)
+
+void xmm7360_create_bearer (MMIfaceModem *self,
+                        MMBearerProperties *properties,
+                        GAsyncReadyCallback callback,
+                        gpointer user_data)
 {
-    iface->peek_parent_broadband_modem_class = peek_parent_broadband_modem_class;
+    //TODO: create bearer
 }
 
-static void
-mm_broadband_modem_xmm_class_init (MMBroadbandModemXmmClass *klass)
+MMBaseBearer * xmm7360_create_bearer_finish (MMIfaceModem *self,
+                                        GAsyncResult *res,
+                                        GError **error)
 {
-    MMBroadbandModemClass *broadband_modem_class = MM_BROADBAND_MODEM_CLASS (klass);
-
-    broadband_modem_class->setup_ports = mm_shared_xmm_setup_ports;
+    //TODO: return bearer
+    return NULL;
 }

@@ -11,37 +11,38 @@
  * GNU General Public License for more details:
  *
  * Copyright (C) 2018 Aleksander Morgado <aleksander@aleksander.es>
+ * Copyright (C) 2020 Marinus Enzinger <marinus@enzingerm.de>
  */
 
-#ifndef MM_BROADBAND_MODEM_XMM_H
-#define MM_BROADBAND_MODEM_XMM_H
+#ifndef MM_BROADBAND_MODEM_XMM7360_H
+#define MM_BROADBAND_MODEM_XMM7360_H
 
 #include "mm-broadband-modem.h"
 
-#define MM_TYPE_BROADBAND_MODEM_XMM            (mm_broadband_modem_xmm_get_type ())
-#define MM_BROADBAND_MODEM_XMM(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), MM_TYPE_BROADBAND_MODEM_XMM, MMBroadbandModemXmm))
-#define MM_BROADBAND_MODEM_XMM_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass),  MM_TYPE_BROADBAND_MODEM_XMM, MMBroadbandModemXmmClass))
-#define MM_IS_BROADBAND_MODEM_XMM(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), MM_TYPE_BROADBAND_MODEM_XMM))
-#define MM_IS_BROADBAND_MODEM_XMM_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  MM_TYPE_BROADBAND_MODEM_XMM))
-#define MM_BROADBAND_MODEM_XMM_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  MM_TYPE_BROADBAND_MODEM_XMM, MMBroadbandModemXmmClass))
+#define MM_TYPE_BROADBAND_MODEM_XMM7360            (mm_broadband_modem_xmm7360_get_type ())
+#define MM_BROADBAND_MODEM_XMM7360(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), MM_TYPE_BROADBAND_MODEM_XMM7360, MMBroadbandModemXmm7360))
+#define MM_BROADBAND_MODEM_XMM7360_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass),  MM_TYPE_BROADBAND_MODEM_XMM7360, MMBroadbandModemXmm7360Class))
+#define MM_IS_BROADBAND_MODEM_XMM7360(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), MM_TYPE_BROADBAND_MODEM_XMM7360))
+#define MM_IS_BROADBAND_MODEM_XMM7360_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  MM_TYPE_BROADBAND_MODEM_XMM7360))
+#define MM_BROADBAND_MODEM_XMM7360_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  MM_TYPE_BROADBAND_MODEM_XMM7360, MMBroadbandModemXmm7360Class))
 
-typedef struct _MMBroadbandModemXmm MMBroadbandModemXmm;
-typedef struct _MMBroadbandModemXmmClass MMBroadbandModemXmmClass;
+typedef struct _MMBroadbandModemXmm7360 MMBroadbandModemXmm7360;
+typedef struct _MMBroadbandModemXmm7360Class MMBroadbandModemXmm7360Class;
 
-struct _MMBroadbandModemXmm {
+struct _MMBroadbandModemXmm7360 {
     MMBroadbandModem parent;
 };
 
-struct _MMBroadbandModemXmmClass{
+struct _MMBroadbandModemXmm7360Class {
     MMBroadbandModemClass parent;
 };
 
-GType mm_broadband_modem_xmm_get_type (void);
+GType mm_broadband_modem_xmm7360_get_type (void);
 
-MMBroadbandModemXmm *mm_broadband_modem_xmm_new (const gchar  *device,
+MMBroadbandModemXmm7360 *mm_broadband_modem_xmm7360_new (const gchar  *device,
                                                  const gchar **drivers,
                                                  const gchar  *plugin,
                                                  guint16       vendor_id,
                                                  guint16       product_id);
 
-#endif /* MM_BROADBAND_MODEM_XMM_H */
+#endif /* MM_BROADBAND_MODEM_XMM7360_H */
