@@ -188,9 +188,9 @@ mm_filter_port (MMFilter        *self,
 
         /* If the physdev is a 'platform' or 'pnp' device that's not whitelisted, ignore it */
         physdev_subsystem = mm_kernel_device_get_physdev_subsystem (port);
-        /* Special rule for XMM7360 tty ports which would be filtered out by the platform driver otherwise */
-        if (!g_strcmp0 (physdev_subsystem, "pci") && !strncmp(name, "ttyXMM", 6)) {
-            mm_dbg ("[filter] (%s/%s): XMM7360 TTY port allowed", subsystem, name);
+        /* Special rule for XMM7360 main tty port which would be filtered out by the platform driver otherwise */
+        if (!g_strcmp0 (physdev_subsystem, "pci") && !g_strcmp0 (name, "ttyXMM1")) {
+            mm_dbg ("[filter] (%s/%s): XMM7360 TTY command port allowed", subsystem, name);
             return TRUE;
         }
         if ((self->priv->enabled_rules & MM_FILTER_RULE_TTY_PLATFORM_DRIVER) &&
