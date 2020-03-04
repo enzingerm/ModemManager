@@ -37,6 +37,16 @@ int xmm7360_rpc_init(xmm7360_rpc* rpc) {
     return 0;
 }
 
+int xmm7360_rpc_dispose(xmm7360_rpc* rpc) {
+    int res;
+    if(rpc->fd < 0) {
+        return -1;
+    }
+    res = close(rpc->fd);
+    rpc->fd = -1;
+    return res;
+}
+
 rpc_message* xmm7360_rpc_alloc_message(void) {
     GArray* response_arr = g_array_new(FALSE, TRUE, sizeof(rpc_arg));
     rpc_message* msg = g_new0(rpc_message, 1);

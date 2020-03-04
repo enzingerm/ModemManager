@@ -27,11 +27,13 @@
 #include "mm-broadband-modem-xmm.h"
 #include "mm-shared-xmm.h"
 #include "mm-broadband-modem-xmm7360.h"
+#include "mm-xmm7360-rpc.h"
 
+struct _MMBroadbandModemXmm7360Private {
+    xmm7360_rpc rpc;
+};
 
 static void iface_modem_init (MMIfaceModem *iface);
-// static void shared_xmm_init  (MMSharedXmm  *iface);
-// static void iface_modem_signal_init (MMIfaceModemSignal *iface);
 
 /* XMM7360 specific bearer creation */
 void xmm7360_create_bearer (MMIfaceModem *self,
@@ -66,7 +68,41 @@ mm_broadband_modem_xmm7360_new (const gchar  *device,
 static void
 mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
 {
-    //TODO: RPC calls to initialize modem
+    xmm7360_rpc* rpc;
+
+    /* Initialize private data */
+    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self,
+                                              MM_TYPE_BROADBAND_MODEM_XMM7360,
+                                              MMBroadbandModemXmm7360Private);
+
+    /* initialize modem RPC */
+    rpc = &self->priv->rpc;
+    if(xmm7360_rpc_init(rpc) != 0) {
+        mm_err ("Failed to initialize XMM7360 RPC!");
+        /* TODO: handle rpc initialization error */
+        return;
+    }
+
+    mm_dbg ("Initializing XMM7360 RPC!");
+    /* lots of synchronous calls, this has to be improved for sure */
+    xmm7360_rpc_execute(rpc, UtaMsSmsInit, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsCbsInit, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsNetOpen, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsCallCsInit, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsCallPsInitialize, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsNetSetRadioSignalReporting, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsSsInit, FALSE, NULL, NULL);
+    xmm7360_rpc_execute(rpc, UtaMsSimOpenReq, FALSE, NULL, NULL);
+
+    if(xmm7360_do_fcc_unlock(rpc) != 0) {
+        /* TODO: handle error */
+        return;
+    }
+    if(xmm7360_uta_mode_set(rpc, 1) != 0) {
+        /* TODO: handle error */
+        return;
+    }
+    mm_dbg ("Successfully initialized XMM7360 RPC!");
 }
 
 static void
@@ -77,9 +113,25 @@ iface_modem_init (MMIfaceModem *iface)
 }
 
 static void
+dispose (GObject *object)
+{
+    MMBroadbandModemXmm7360 *self = MM_BROADBAND_MODEM_XMM7360 (object);
+
+    /* disconnect from RPC */
+    xmm7360_rpc_dispose(&self->priv->rpc);
+
+    G_OBJECT_CLASS (mm_broadband_modem_xmm7360_parent_class)->dispose (object);
+}
+
+static void
 mm_broadband_modem_xmm7360_class_init (MMBroadbandModemXmm7360Class *klass)
 {
+    GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
+    g_type_class_add_private (object_class, sizeof (MMBroadbandModemXmm7360Private));
+
+    /* virtual methods */
+    object_class->dispose = dispose;
 }
 
 
