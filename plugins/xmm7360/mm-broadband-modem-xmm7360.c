@@ -8,7 +8,7 @@
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details:
+ * GNU General Public License for more details.
  *
  * Copyright (C) 2020 Marinus Enzinger
  */
@@ -28,6 +28,7 @@
 #include "mm-shared-xmm.h"
 #include "mm-broadband-modem-xmm7360.h"
 #include "mm-xmm7360-rpc.h"
+#include "mm-bearer-xmm7360.h"
 
 struct _MMBroadbandModemXmm7360Private {
     xmm7360_rpc rpc;
@@ -83,13 +84,14 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
         return;
     }
 
-    mm_dbg ("Initializing XMM7360 RPC!");
+    mm_dbg ("Initializing XMM7360 modem!");
     /* lots of synchronous calls, this has to be improved for sure */
     xmm7360_rpc_execute(rpc, UtaMsSmsInit, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsCbsInit, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsNetOpen, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsCallCsInit, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsCallPsInitialize, FALSE, NULL, NULL);
+    /* TODO: Signal reporting does not work yet, maybe use different parameters to this call? */
     xmm7360_rpc_execute(rpc, UtaMsNetSetRadioSignalReporting, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsSsInit, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsSimOpenReq, FALSE, NULL, NULL);
@@ -102,7 +104,7 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
         /* TODO: handle error */
         return;
     }
-    mm_dbg ("Successfully initialized XMM7360 RPC!");
+    mm_dbg ("Successfully initialized XMM7360 modem!");
 }
 
 static void
@@ -135,18 +137,25 @@ mm_broadband_modem_xmm7360_class_init (MMBroadbandModemXmm7360Class *klass)
 }
 
 
-void xmm7360_create_bearer (MMIfaceModem *self,
+void xmm7360_create_bearer (MMIfaceModem *_self,
                         MMBearerProperties *properties,
                         GAsyncReadyCallback callback,
                         gpointer user_data)
 {
-    //TODO: create bearer
+    MMBaseBearer *bearer;
+    GTask *task;
+    MMBroadbandModemXmm7360 *self = MM_BROADBAND_MODEM_XMM7360(_self);
+
+    bearer = mm_bearer_xmm7360_new (self, properties, &self->priv->rpc);
+
+    task = g_task_new (self, NULL, callback, user_data);
+    g_task_return_pointer (task, bearer, g_object_unref);
+    g_object_unref (task);
 }
 
 MMBaseBearer * xmm7360_create_bearer_finish (MMIfaceModem *self,
                                         GAsyncResult *res,
                                         GError **error)
 {
-    //TODO: return bearer
-    return NULL;
+    return g_task_propagate_pointer (G_TASK (res), error);
 }

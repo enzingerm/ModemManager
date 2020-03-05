@@ -582,7 +582,7 @@ GByteArray* pack_uta_sys_get_info(gint index);
 
 GByteArray* pack_uta_mode_set(gint32 mode);
 
-GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn);
+GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(const gchar* apn);
 
 /**
  * Argument unpacking functions
@@ -610,5 +610,7 @@ int xmm7360_do_fcc_unlock(xmm7360_rpc* rpc);
 int xmm7360_net_attach(xmm7360_rpc* rpc, gint32* status_ptr);
 
 int xmm7360_get_ip_and_dns(xmm7360_rpc* rpc, xmm7360_ip_config* ip_config);
+
+int xmm7360_establish_connection(xmm7360_rpc* rpc);
 
 #endif /* MM_XMM7360_RPC_H */

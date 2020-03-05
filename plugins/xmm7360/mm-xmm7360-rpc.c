@@ -455,7 +455,7 @@ GByteArray* pack_uta_mode_set(gint32 mode) {
     return pack(G_N_ELEMENTS(args), args);
 }
 
-GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(gchar* apn) {
+GByteArray* pack_uta_ms_call_ps_attach_apn_config_req(const gchar* apn) {
     gchar zeroes[270] = { 0 };
     rpc_arg args[] = {
         {  .type = BYTE, .value = { .b = 0 } },
@@ -911,5 +911,62 @@ int xmm7360_get_ip_and_dns(xmm7360_rpc* rpc, xmm7360_ip_config* ip_config) {
 
 err:
     xmm7360_rpc_free_message(message);
+    return -1;
+}
+
+int xmm7360_establish_connection(xmm7360_rpc* rpc) {
+    rpc_message* ps_connect_result = NULL;
+    rpc_message* datachannel_connect_result = NULL;
+    GByteArray* connect_setup_body = g_byte_array_new();
+
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaMsCallPsConnectReq,
+        TRUE,
+        pack_uta_ms_call_ps_connect_req(),
+        &ps_connect_result
+    ) != 0) {
+        goto err;
+    }
+
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaRPCPsConnectToDatachannelReq,
+        FALSE,
+        pack_uta_rpc_ps_connect_to_datachannel_req(),
+        &datachannel_connect_result
+    ) != 0) {
+        goto err;
+    }
+
+    g_byte_array_append(
+        connect_setup_body,
+        g_bytes_get_data(ps_connect_result->body, NULL),
+        g_bytes_get_size(ps_connect_result->body) - 6
+    );
+    g_byte_array_append(
+        connect_setup_body,
+        g_bytes_get_data(datachannel_connect_result->body, NULL),
+        g_bytes_get_size(datachannel_connect_result->body)
+    );
+    asn_int4(connect_setup_body, 0);
+
+    if(xmm7360_rpc_execute(
+        rpc,
+        UtaRPCPSConnectSetupReq,
+        FALSE,
+        connect_setup_body,
+        NULL
+    ) != 0) {
+        goto err;
+    }
+    
+    xmm7360_rpc_free_message(ps_connect_result);
+    xmm7360_rpc_free_message(datachannel_connect_result);
+    return 0;
+
+err:
+    xmm7360_rpc_free_message(ps_connect_result);
+    xmm7360_rpc_free_message(datachannel_connect_result);
     return -1;
 }

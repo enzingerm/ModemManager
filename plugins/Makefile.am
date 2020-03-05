@@ -1107,6 +1107,8 @@ libmm_plugin_xmm7360_la_SOURCES = \
 	xmm7360/mm-plugin-xmm7360.h \
 	xmm7360/mm-broadband-modem-xmm7360.c \
 	xmm7360/mm-broadband-modem-xmm7360.h \
+	xmm7360/mm-bearer-xmm7360.c \
+	xmm7360/mm-bearer-xmm7360.h \
 	xmm7360/mm-xmm7360-rpc.c \
 	xmm7360/mm-xmm7360-rpc.h \
 	$(NULL)
