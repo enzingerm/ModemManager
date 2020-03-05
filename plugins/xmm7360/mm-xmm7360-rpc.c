@@ -237,7 +237,7 @@ GByteArray* pack(guint count, rpc_arg* args) {
                 g_byte_array_append(ret, (guint8*)&lng, 4);
                 break;
             case STRING:
-                pack_string(ret, (guint8*)args->value.string, strlen(args->value.string), args->size);
+                pack_string(ret, (guint8*)args->value.string, args->size, args->size);
                 break;
             default:
                 //should be unreachable
@@ -431,7 +431,7 @@ GByteArray* pack_uta_rpc_ps_connect_to_datachannel_req(void) {
     return pack(1, (rpc_arg[]) {
         {
             .type = STRING,
-            .size=24,
+            .size = 24, /* length of string + null byte */
             .value = { .string = "/sioscc/PCIE/IOSM/IPS/0" }
         },
     });
