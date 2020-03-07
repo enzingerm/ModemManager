@@ -104,6 +104,12 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
         /* TODO: handle error */
         return;
     }
+
+    /* Had to do this otherwise ModemManager gets an error when issuing AT+CPIN? while loading modem capabilities */
+    while(!rpc->sim_initialized) {
+        xmm7360_rpc_pump(rpc, NULL);
+    }
+
     mm_dbg ("Successfully initialized XMM7360 modem!");
 }
 

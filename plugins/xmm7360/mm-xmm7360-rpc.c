@@ -34,6 +34,7 @@ int xmm7360_rpc_init(xmm7360_rpc* rpc) {
     }
     rpc->fd = fd;
     rpc->attach_allowed = FALSE;
+    rpc->sim_initialized = FALSE;
     return 0;
 }
 
@@ -203,14 +204,19 @@ err:
 
 int xmm7360_rpc_handle_unsolicited(xmm7360_rpc* rpc, rpc_message* message) {
     rpc_arg* attach_argument;
+    Xmm7360RpcUnsolIds unsol_id = (Xmm7360RpcUnsolIds)message->code;
 
-    if((Xmm7360RpcUnsolIds)message->code == UtaMsNetIsAttachAllowedIndCb) {
+
+    if(unsol_id == UtaMsNetIsAttachAllowedIndCb) {
         if(message->content->len <= 2) {
             //TODO: print error
             return -1;
         }
         attach_argument = &g_array_index(message->content, rpc_arg, 2);
         rpc->attach_allowed = GET_RPC_INT(attach_argument);
+    } else if(unsol_id == UtaMsSimInitIndCb) {
+        /* TODO: check for parameters */
+        rpc->sim_initialized = TRUE;
     }
     return 0;
 }
