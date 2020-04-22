@@ -169,8 +169,8 @@ _connect (MMBaseBearer *_self,
 
     mm_dbg ("XMM7360 Bearer: attached to net, waiting shortly before getting ip config!");
 
-    // ugly: wait 5 seconds before fetching IP config
-    sleep(5);
+    // ugly: wait 1 seconds before fetching IP config
+    sleep(1);
 
     if(xmm7360_get_ip_and_dns(rpc, &self->priv->ip_config) != 0) {
         g_task_report_new_error (
