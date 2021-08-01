@@ -28,16 +28,18 @@
 #include "mm-plugin-manager.h"
 #include "mm-plugin.h"
 #include "mm-shared.h"
-#include "mm-log.h"
+#include "mm-utils.h"
+#include "mm-log-object.h"
 
 #define SHARED_PREFIX "libmm-shared"
 #define PLUGIN_PREFIX "libmm-plugin"
 
-static void initable_iface_init (GInitableIface *iface);
+static void initable_iface_init   (GInitableIface *iface);
+static void log_object_iface_init (MMLogObjectInterface *iface);
 
 G_DEFINE_TYPE_EXTENDED (MMPluginManager, mm_plugin_manager, G_TYPE_OBJECT, 0,
-                        G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE,
-                                               initable_iface_init))
+                        G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE, initable_iface_init)
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_LOG_OBJECT, log_object_iface_init))
 
 enum {
     PROP_0,
@@ -61,6 +63,9 @@ struct _MMPluginManagerPrivate {
 
     /* List of ongoing device support checks */
     GList *device_contexts;
+
+    /* Full list of subsystems requested by the registered plugins */
+    gchar **subsystems;
 };
 
 /*****************************************************************************/
@@ -177,7 +182,7 @@ common_async_context_new (MMPluginManager *self,
 /*
  * Port context
  *
- * This structure hold all the probing information related to a single port.
+ * This structure holds all the probing information related to a single port.
  */
 struct _PortContext {
     /* Reference counting */
@@ -260,7 +265,8 @@ port_context_run_finish (MMPluginManager  *self,
 static void
 port_context_complete (PortContext *port_context)
 {
-    GTask *task;
+    MMPluginManager *self;
+    GTask           *task;
 
     /* If already completed, do nothing */
     if (!port_context->task)
@@ -271,8 +277,9 @@ port_context_complete (PortContext *port_context)
     port_context->task = NULL;
 
     /* Log about the time required to complete the checks */
-    mm_dbg ("[plugin manager] task %s: finished in '%lf' seconds",
-            port_context->name, g_timer_elapsed (port_context->timer, NULL));
+    self = g_task_get_source_object (task);
+    mm_obj_dbg (self, "task %s: finished in '%lf' seconds",
+                port_context->name, g_timer_elapsed (port_context->timer, NULL));
 
     if (!port_context->best_plugin)
         g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED, "Unsupported");
@@ -287,10 +294,13 @@ static void
 port_context_supported (PortContext *port_context,
                         MMPlugin    *plugin)
 {
-    g_assert (plugin);
+    MMPluginManager *self;
 
-    mm_dbg ("[plugin manager] task %s: found best plugin for port (%s)",
-            port_context->name, mm_plugin_get_name (plugin));
+    g_assert (plugin);
+    self = g_task_get_source_object (port_context->task);
+
+    mm_obj_dbg (self, "task %s: found best plugin for port (%s)",
+                port_context->name, mm_plugin_get_name (plugin));
 
     /* Found a best plugin, store it to return it */
     port_context->best_plugin = g_object_ref (plugin);
@@ -309,7 +319,8 @@ static void
 port_context_set_suggestion (PortContext *port_context,
                              MMPlugin    *suggested_plugin)
 {
-    gboolean forbidden_icera;
+    MMPluginManager *self;
+    gboolean         forbidden_icera;
 
     /* Plugin suggestions serve two different purposes here:
      *  1) Finish all the probes which were deferred until suggested.
@@ -325,6 +336,9 @@ port_context_set_suggestion (PortContext *port_context,
     if (port_context->best_plugin || port_context->suggested_plugin)
         return;
 
+    /* There may not be a task at this point, so be gentle */
+    self = port_context->task ? g_task_get_source_object (port_context->task) : NULL;
+
     /* Complete tasks which were deferred until suggested */
     if (port_context->defer_until_suggested) {
         /* Reset the defer until suggested flag; we consider this
@@ -332,8 +346,8 @@ port_context_set_suggestion (PortContext *port_context,
         port_context->defer_until_suggested = FALSE;
 
         if (suggested_plugin) {
-            mm_dbg ("[plugin manager] task %s: deferred task completed, got suggested plugin (%s)",
-                    port_context->name, mm_plugin_get_name (suggested_plugin));
+            mm_obj_dbg (self, "task %s: deferred task completed, got suggested plugin (%s)",
+                        port_context->name, mm_plugin_get_name (suggested_plugin));
             /* Advance to the suggested plugin and re-check support there */
             port_context->suggested_plugin = g_object_ref (suggested_plugin);
             port_context->current = g_list_find (port_context->current, port_context->suggested_plugin);
@@ -343,8 +357,7 @@ port_context_set_suggestion (PortContext *port_context,
             return;
         }
 
-        mm_dbg ("[plugin manager] task %s: deferred task completed, no suggested plugin",
-                port_context->name);
+        mm_obj_dbg (self, "task %s: deferred task completed, no suggested plugin", port_context->name);
         port_context_complete (port_context);
         return;
     }
@@ -354,7 +367,7 @@ port_context_set_suggestion (PortContext *port_context,
         return;
 
     /* The GENERIC plugin is NEVER suggested to others */
-    if (g_str_equal (mm_plugin_get_name (suggested_plugin), MM_PLUGIN_GENERIC_NAME))
+    if (mm_plugin_is_generic (suggested_plugin))
         return;
 
     /* If the plugin has MM_PLUGIN_FORBIDDEN_ICERA set, we do *not* suggest
@@ -372,8 +385,8 @@ port_context_set_suggestion (PortContext *port_context,
      * should run its probing independently, and we'll later decide
      * which result applies to the whole device.
      */
-    mm_dbg ("[plugin manager] task %s: got suggested plugin (%s)",
-            port_context->name, mm_plugin_get_name (suggested_plugin));
+    mm_obj_dbg (self, "task %s: got suggested plugin (%s)",
+                port_context->name, mm_plugin_get_name (suggested_plugin));
     port_context->suggested_plugin = g_object_ref (suggested_plugin);
 }
 
@@ -381,7 +394,10 @@ static void
 port_context_unsupported (PortContext *port_context,
                           MMPlugin    *plugin)
 {
+    MMPluginManager *self;
+
     g_assert (plugin);
+    self = g_task_get_source_object (port_context->task);
 
     /* If there is no suggested plugin, go on to the next one */
     if (!port_context->suggested_plugin) {
@@ -396,8 +412,8 @@ port_context_unsupported (PortContext *port_context,
      * just cancel the port probing and avoid more tests.
      */
     if (port_context->suggested_plugin == plugin) {
-        mm_dbg ("[plugin manager] task %s: ignoring port unsupported by physical modem's plugin",
-                port_context->name);
+        mm_obj_dbg (self, "task %s: ignoring port unsupported by physical modem's plugin",
+                    port_context->name);
         port_context_complete (port_context);
         return;
     }
@@ -412,14 +428,17 @@ port_context_unsupported (PortContext *port_context,
 static void
 port_context_defer (PortContext *port_context)
 {
+    MMPluginManager *self;
+
+    self = g_task_get_source_object (port_context->task);
+
     /* Try with the suggested one after being deferred */
     if (port_context->suggested_plugin) {
-        mm_dbg ("[plugin manager] task %s: deferring support check (%s suggested)",
-                port_context->name, mm_plugin_get_name (MM_PLUGIN (port_context->suggested_plugin)));
+        mm_obj_dbg (self, "task %s: deferring support check (%s suggested)",
+                    port_context->name, mm_plugin_get_name (MM_PLUGIN (port_context->suggested_plugin)));
         port_context->current = g_list_find (port_context->current, port_context->suggested_plugin);
     } else
-        mm_dbg ("[plugin manager] task %s: deferring support check",
-                port_context->name);
+        mm_obj_dbg (self, "task %s: deferring support check", port_context->name);
 
     /* Schedule checking support.
      *
@@ -434,14 +453,17 @@ static void
 port_context_defer_until_suggested (PortContext *port_context,
                                     MMPlugin    *plugin)
 {
+    MMPluginManager *self;
+
     g_assert (plugin);
+    self = g_task_get_source_object (port_context->task);
 
     /* If we arrived here and we already have a plugin suggested, use it */
     if (port_context->suggested_plugin) {
         /* We can finish this context */
         if (port_context->suggested_plugin == plugin) {
-            mm_dbg ("[plugin manager] task %s: completed, got suggested plugin (%s)",
-                    port_context->name, mm_plugin_get_name (port_context->suggested_plugin));
+            mm_obj_dbg (self, "task %s: completed, got suggested plugin (%s)",
+                        port_context->name, mm_plugin_get_name (port_context->suggested_plugin));
             /* Store best plugin and end operation */
             port_context->best_plugin = g_object_ref (port_context->suggested_plugin);
             port_context_complete (port_context);
@@ -449,8 +471,8 @@ port_context_defer_until_suggested (PortContext *port_context,
         }
 
         /* Recheck support in deferred task */
-        mm_dbg ("[plugin manager] task %s: re-checking support on deferred task, got suggested plugin (%s)",
-                port_context->name, mm_plugin_get_name (port_context->suggested_plugin));
+        mm_obj_dbg (self, "task %s: re-checking support on deferred task, got suggested plugin (%s)",
+                    port_context->name, mm_plugin_get_name (port_context->suggested_plugin));
         port_context->current = g_list_find (port_context->current, port_context->suggested_plugin);
         port_context_next (port_context);
         return;
@@ -459,8 +481,7 @@ port_context_defer_until_suggested (PortContext *port_context,
     /* We are deferred until a suggested plugin is given. If last supports task
      * of a given device is finished without finding a best plugin, this task
      * will get finished reporting unsupported. */
-    mm_dbg ("[plugin manager] task %s: deferring support check until result suggested",
-            port_context->name);
+    mm_obj_dbg (self, "task %s: deferring support check until result suggested", port_context->name);
     port_context->defer_until_suggested = TRUE;
 }
 
@@ -469,15 +490,18 @@ plugin_supports_port_ready (MMPlugin     *plugin,
                             GAsyncResult *res,
                             PortContext  *port_context)
 {
+    MMPluginManager        *self;
     MMPluginSupportsResult  support_result;
     GError                 *error = NULL;
+
+    self = g_task_get_source_object (port_context->task);
 
     /* Get supports check results */
     support_result = mm_plugin_supports_port_finish (plugin, res, &error);
     if (error) {
         g_assert_cmpuint (support_result, ==, MM_PLUGIN_SUPPORTS_PORT_UNKNOWN);
-        mm_warn ("[plugin manager] task %s: error when checking support with plugin '%s': '%s'",
-                 port_context->name, mm_plugin_get_name (plugin), error->message);
+        mm_obj_warn (self, "task %s: error when checking support with plugin '%s': %s",
+                     port_context->name, mm_plugin_get_name (plugin), error->message);
         g_error_free (error);
     }
 
@@ -507,7 +531,10 @@ plugin_supports_port_ready (MMPlugin     *plugin,
 static void
 port_context_next (PortContext *port_context)
 {
-    MMPlugin *plugin;
+    MMPluginManager *self;
+    MMPlugin        *plugin;
+
+    self = g_task_get_source_object (port_context->task);
 
     /* If we're cancelled, done */
     if (g_cancellable_is_cancelled (port_context->cancellable)) {
@@ -527,8 +554,8 @@ port_context_next (PortContext *port_context)
      * async method because we want to make sure the context is still valid
      * once the method finishes. */
     plugin = MM_PLUGIN (port_context->current->data);
-    mm_dbg ("[plugin manager] task %s: checking with plugin '%s'",
-            port_context->name, mm_plugin_get_name (plugin));
+    mm_obj_dbg (self, "task %s: checking with plugin '%s'",
+                port_context->name, mm_plugin_get_name (plugin));
     mm_plugin_supports_port (plugin,
                              port_context->device,
                              port_context->port,
@@ -540,6 +567,8 @@ port_context_next (PortContext *port_context)
 static gboolean
 port_context_cancel (PortContext *port_context)
 {
+    MMPluginManager *self;
+
     /* Port context cancellation, which only makes sense if the context is
      * actually being run, so just exit if it isn't. */
     if (!port_context->task)
@@ -549,8 +578,8 @@ port_context_cancel (PortContext *port_context)
     if (g_cancellable_is_cancelled (port_context->cancellable))
         return FALSE;
 
-    mm_dbg ("[plugin manager) task %s: cancellation requested",
-            port_context->name);
+    self = g_task_get_source_object (port_context->task);
+    mm_obj_dbg (self, "task %s: cancellation requested", port_context->name);
 
     /* Make sure we hold a port context reference while cancelling, as the
      * cancellable signal handlers may end up unref-ing our last reference
@@ -600,8 +629,8 @@ port_context_run (MMPluginManager     *self,
         port_context->suggested_plugin = g_object_ref (suggested);
         port_context->current = g_list_find (port_context->current, port_context->suggested_plugin);
         if (!port_context->current)
-            mm_warn ("[plugin manager] task %s: suggested plugin (%s) not among the ones to test",
-                     port_context->name, mm_plugin_get_name (suggested));
+            mm_obj_warn (self, "task %s: suggested plugin (%s) not among the ones to test",
+                         port_context->name, mm_plugin_get_name (suggested));
     }
 
     /* Log the list of plugins found and specify which are the ones that are going
@@ -610,31 +639,31 @@ port_context_run (MMPluginManager     *self,
         gboolean  suggested_found = FALSE;
         GList    *l;
 
-        mm_dbg ("[plugin manager] task %s: found '%u' plugins to try",
-                port_context->name, g_list_length (port_context->plugins));
+        mm_obj_dbg (self, "task %s: found '%u' plugins to try",
+                    port_context->name, g_list_length (port_context->plugins));
 
         for (l = port_context->plugins; l; l = g_list_next (l)) {
             MMPlugin *plugin;
 
             plugin = MM_PLUGIN (l->data);
             if (suggested_found) {
-                mm_dbg ("[plugin manager] task %s: may try with plugin '%s'",
-                        port_context->name, mm_plugin_get_name (plugin));
+                mm_obj_dbg (self, "task %s: may try with plugin '%s'",
+                            port_context->name, mm_plugin_get_name (plugin));
                 continue;
             }
             if (suggested && l == port_context->current) {
                 suggested_found = TRUE;
-                mm_dbg ("[plugin manager] task %s: will try with plugin '%s' (suggested)",
-                        port_context->name, mm_plugin_get_name (plugin));
+                mm_obj_dbg (self, "task %s: will try with plugin '%s' (suggested)",
+                            port_context->name, mm_plugin_get_name (plugin));
                 continue;
             }
             if (suggested && !suggested_found) {
-                mm_dbg ("[plugin manager] task %s: won't try with plugin '%s' (skipped)",
-                        port_context->name, mm_plugin_get_name (plugin));
+                mm_obj_dbg (self, "task %s: won't try with plugin '%s' (skipped)",
+                            port_context->name, mm_plugin_get_name (plugin));
                 continue;
             }
-            mm_dbg ("[plugin manager] task %s: will try with plugin '%s'",
-                    port_context->name, mm_plugin_get_name (plugin));
+            mm_obj_dbg (self, "task %s: will try with plugin '%s'",
+                        port_context->name, mm_plugin_get_name (plugin));
         }
     }
 
@@ -647,7 +676,7 @@ port_context_run (MMPluginManager     *self,
      * best plugin found for the port. */
     port_context->task = g_task_new (self, port_context->cancellable, callback, user_data);
 
-    mm_dbg ("[plugin manager) task %s: started", port_context->name);
+    mm_obj_dbg (self, "task %s: started", port_context->name);
 
     /* Go probe with the first plugin */
     port_context_next (port_context);
@@ -710,7 +739,7 @@ struct _DeviceContext {
 
     /* The operation task */
     GTask *task;
-    /* Internal ancellable */
+    /* Internal cancellable */
     GCancellable *cancellable;
 
     /* Timer tracking how much time is required for the device support check */
@@ -828,22 +857,25 @@ device_context_run_finish (MMPluginManager  *self,
 static void
 device_context_complete (DeviceContext *device_context)
 {
-    GTask *task;
+    MMPluginManager *self;
+    GTask           *task;
+
+    self = g_task_get_source_object (device_context->task);
 
     /* If the context is completed before the 2500ms minimum probing time, we need to wait
      * until that happens, so that we give enough time to udev/hotplug to report the
      * new port additions. */
     if (device_context->min_probing_time_id) {
-        mm_dbg ("[plugin manager] task %s: all port probings completed, but not reached min probing time yet",
-                device_context->name);
+        mm_obj_dbg (self, "task %s: all port probings completed, but not reached min probing time yet",
+                    device_context->name);
         return;
     }
 
     /* If the context is completed less than 1500ms before the last port was exposed,
      * wait some more. */
     if (device_context->extra_probing_time_id) {
-        mm_dbg ("[plugin manager] task %s: all port probings completed, but not reached extra probing time yet",
-                device_context->name);
+        mm_obj_dbg (self, "task %s: all port probings completed, but not reached extra probing time yet",
+                    device_context->name);
         return;
     }
 
@@ -853,8 +885,8 @@ device_context_complete (DeviceContext *device_context)
     device_context->task = NULL;
 
     /* Log about the time required to complete the checks */
-    mm_dbg ("[plugin manager] task %s: finished in '%lf' seconds",
-            device_context->name, g_timer_elapsed (device_context->timer, NULL));
+    mm_obj_dbg (self, "task %s: finished in '%lf' seconds",
+                device_context->name, g_timer_elapsed (device_context->timer, NULL));
 
     /* Remove signal handlers */
     if (device_context->grabbed_id) {
@@ -913,20 +945,24 @@ device_context_set_best_plugin (DeviceContext *device_context,
                                 PortContext   *port_context,
                                 MMPlugin      *best_plugin)
 {
+    MMPluginManager *self;
+
+    self = g_task_get_source_object (device_context->task);
+
     if (!best_plugin) {
         /* If the port appeared after an already probed port, which decided that
          * the Generic plugin was the best one (which is by default not initially
          * suggested), we'll end up arriving here. Don't ignore it, it may well
          * be a wwan port that we do need to grab. */
         if (device_context->best_plugin) {
-            mm_dbg ("[plugin manager] task %s: assuming port can be handled by the '%s' plugin",
-                    port_context->name, mm_plugin_get_name (device_context->best_plugin));
+            mm_obj_dbg (self, "task %s: assuming port can be handled by the '%s' plugin",
+                        port_context->name, mm_plugin_get_name (device_context->best_plugin));
             return;
         }
 
         /* Unsupported error, this is generic when we cannot find a plugin */
-        mm_dbg ("[plugin manager] task %s: not supported by any plugin" ,
-                port_context->name);
+        mm_obj_dbg (self, "task %s: not supported by any plugin" ,
+                    port_context->name);
 
         /* Tell the device to ignore this port */
         mm_device_ignore_port (device_context->device, port_context->port);
@@ -942,12 +978,12 @@ device_context_set_best_plugin (DeviceContext *device_context,
      * one and now we're reporting a more specific one, use the new one.
      */
     if (!device_context->best_plugin ||
-        (g_str_equal (mm_plugin_get_name (device_context->best_plugin), MM_PLUGIN_GENERIC_NAME) &&
+        (mm_plugin_is_generic (device_context->best_plugin) &&
          device_context->best_plugin != best_plugin)) {
         /* Only log best plugin if it's not the generic one */
-        if (!g_str_equal (mm_plugin_get_name (best_plugin), MM_PLUGIN_GENERIC_NAME))
-            mm_dbg ("[plugin manager] task %s: found best plugin: %s",
-                    port_context->name, mm_plugin_get_name (best_plugin));
+        if (!mm_plugin_is_generic (best_plugin))
+            mm_obj_dbg (self, "task %s: found best plugin: %s",
+                        port_context->name, mm_plugin_get_name (best_plugin));
         /* Store and suggest this plugin also to other port probes */
         device_context->best_plugin = g_object_ref (best_plugin);
         device_context_suggest_plugin (device_context, port_context, best_plugin);
@@ -979,19 +1015,19 @@ device_context_set_best_plugin (DeviceContext *device_context,
         g_assert (new_allowed_icera == FALSE || new_forbidden_icera == FALSE);
 
         if (previous_allowed_icera && new_forbidden_icera)
-            mm_warn ("[plugin manager] task %s: will use plugin '%s' instead of '%s', modem is icera-capable",
+            mm_obj_warn (self, "task %s: will use plugin '%s' instead of '%s', modem is icera-capable",
                      port_context->name,
                      mm_plugin_get_name (device_context->best_plugin),
                      mm_plugin_get_name (best_plugin));
         else if (new_allowed_icera && previous_forbidden_icera) {
-            mm_warn ("[plugin manager] task %s: overriding previously selected device plugin '%s' with '%s', modem is icera-capable",
+            mm_obj_warn (self, "task %s: overriding previously selected device plugin '%s' with '%s', modem is icera-capable",
                      port_context->name,
                      mm_plugin_get_name (device_context->best_plugin),
                      mm_plugin_get_name (best_plugin));
             g_object_unref (device_context->best_plugin);
             device_context->best_plugin = g_object_ref (best_plugin);
         } else
-            mm_warn ("[plugin manager] task %s: plugin mismatch error (device reports '%s', port reports '%s')",
+            mm_obj_warn (self, "task %s: plugin mismatch error (device reports '%s', port reports '%s')",
                      port_context->name,
                      mm_plugin_get_name (device_context->best_plugin),
                      mm_plugin_get_name (best_plugin));
@@ -999,21 +1035,24 @@ device_context_set_best_plugin (DeviceContext *device_context,
     }
 
     /* Device plugin equal to best plugin */
-    mm_dbg ("[plugin manager] task %s: best plugin matches device reported one: %s",
-            port_context->name, mm_plugin_get_name (best_plugin));
+    mm_obj_dbg (self, "task %s: best plugin matches device reported one: %s",
+                port_context->name, mm_plugin_get_name (best_plugin));
 }
 
 static void
 device_context_continue (DeviceContext *device_context)
 {
-    GList   *l;
-    GString *s = NULL;
-    guint    n = 0;
-    guint    n_active = 0;
+    MMPluginManager *self;
+    GList           *l;
+    GString         *s = NULL;
+    guint            n = 0;
+    guint            n_active = 0;
+
+    self = g_task_get_source_object (device_context->task);
 
     /* If there are no running port contexts around, we're free to finish */
     if (!device_context->port_contexts) {
-        mm_dbg ("[plugin manager] task %s: no more ports to probe", device_context->name);
+        mm_obj_dbg (self, "task %s: no more ports to probe", device_context->name);
         device_context_complete (device_context);
         return;
     }
@@ -1038,12 +1077,12 @@ device_context_continue (DeviceContext *device_context)
     }
 
     g_assert (n > 0 && s);
-    mm_dbg ("[plugin Manager] task %s: still %u running probes (%u active): %s",
-            device_context->name, n, n_active, s->str);
+    mm_obj_dbg (self, "task %s: still %u running probes (%u active): %s",
+                device_context->name, n, n_active, s->str);
     g_string_free (s, TRUE);
 
     if (n_active == 0) {
-        mm_dbg ("[plugin manager] task %s: no active tasks to probe", device_context->name);
+        mm_obj_dbg (self, "task %s: no active tasks to probe", device_context->name);
         device_context_suggest_plugin (device_context, NULL, NULL);
     }
 }
@@ -1064,7 +1103,7 @@ port_context_run_ready (MMPluginManager    *self,
             /* This error is not critical */
             device_context_set_best_plugin (common->device_context, common->port_context, NULL);
         } else
-            mm_warn ("[plugin manager] task %s: failed: %s", common->port_context->name, error->message);
+            mm_obj_warn (self, "task %s: failed: %s", common->port_context->name, error->message);
         g_error_free (error);
     } else {
         /* Set the plugin as the best one in the device context */
@@ -1090,9 +1129,12 @@ port_context_run_ready (MMPluginManager    *self,
 static gboolean
 device_context_min_probing_time_elapsed (DeviceContext *device_context)
 {
+    MMPluginManager *self;
+
     device_context->min_probing_time_id = 0;
 
-    mm_dbg ("[plugin manager] task %s: min probing time elapsed", device_context->name);
+    self = g_task_get_source_object (device_context->task);
+    mm_obj_dbg (self, "task %s: min probing time elapsed", device_context->name);
 
     /* Wakeup the device context logic */
     device_context_continue (device_context);
@@ -1102,9 +1144,12 @@ device_context_min_probing_time_elapsed (DeviceContext *device_context)
 static gboolean
 device_context_extra_probing_time_elapsed (DeviceContext *device_context)
 {
+    MMPluginManager *self;
+
     device_context->extra_probing_time_id = 0;
 
-    mm_dbg ("[plugin manager] task %s: extra probing time elapsed", device_context->name);
+    self = g_task_get_source_object (device_context->task);
+    mm_obj_dbg (self, "task %s: extra probing time elapsed", device_context->name);
 
     /* Wakeup the device context logic */
     device_context_continue (device_context);
@@ -1129,10 +1174,8 @@ device_context_run_port_context (DeviceContext *device_context,
 
     /* If we got one already set in the device context, it will be the first one,
      * unless it is the generic plugin */
-    if (device_context->best_plugin &&
-        !g_str_equal (mm_plugin_get_name (device_context->best_plugin), MM_PLUGIN_GENERIC_NAME)) {
+    if (device_context->best_plugin && !mm_plugin_is_generic (device_context->best_plugin))
         suggested = device_context->best_plugin;
-    }
 
     port_context_run (self,
                       port_context,
@@ -1156,7 +1199,7 @@ device_context_min_wait_time_elapsed (DeviceContext *device_context)
     self = device_context->self;
 
     device_context->min_wait_time_id = 0;
-    mm_dbg ("[plugin manager] task %s: min wait time elapsed", device_context->name);
+    mm_obj_dbg (self, "task %s: min wait time elapsed", device_context->name);
 
     /* Move list of port contexts out of the wait list */
     g_assert (!device_context->port_contexts);
@@ -1185,10 +1228,12 @@ static void
 device_context_port_released (DeviceContext  *device_context,
                               MMKernelDevice *port)
 {
-    PortContext *port_context;
+    MMPluginManager *self;
+    PortContext     *port_context;
 
-    mm_dbg ("[plugin manager] task %s: port released: %s",
-            device_context->name, mm_kernel_device_get_name (port));
+    self = g_task_get_source_object (device_context->task);
+    mm_obj_dbg (self, "task %s: port released: %s",
+                device_context->name, mm_kernel_device_get_name (port));
 
     /* Check if there's a waiting port context */
     port_context = device_context_peek_waiting_port_context (device_context, port);
@@ -1209,8 +1254,8 @@ device_context_port_released (DeviceContext  *device_context,
 
     /* This is not something worth warning. If the probing task has already
      * been finished, it will already be removed from the list */
-    mm_dbg ("[plugin manager] task %s: port wasn't found: %s",
-            device_context->name, mm_kernel_device_get_name (port));
+    mm_obj_dbg (self, "task %s: port wasn't found: %s",
+                device_context->name, mm_kernel_device_get_name (port));
 }
 
 static void
@@ -1223,13 +1268,13 @@ device_context_port_grabbed (DeviceContext  *device_context,
     /* Recover plugin manager */
     self = MM_PLUGIN_MANAGER (device_context->self);
 
-    mm_dbg ("[plugin manager] task %s: port grabbed: %s",
-            device_context->name, mm_kernel_device_get_name (port));
+    mm_obj_dbg (self, "task %s: port grabbed: %s",
+                device_context->name, mm_kernel_device_get_name (port));
 
     /* Ignore if for any reason we still have it in the running list */
     port_context = device_context_peek_running_port_context (device_context, port);
     if (port_context) {
-        mm_warn ("[plugin manager] task %s: port context already being processed",
+        mm_obj_warn (self, "task %s: port context already being processed",
                  device_context->name);
         return;
     }
@@ -1237,7 +1282,7 @@ device_context_port_grabbed (DeviceContext  *device_context,
     /* Ignore if for any reason we still have it in the waiting list */
     port_context = device_context_peek_waiting_port_context (device_context, port);
     if (port_context) {
-        mm_warn ("[plugin manager] task %s: port context already scheduled",
+        mm_obj_warn (self, "task %s: port context already scheduled",
                  device_context->name);
         return;
     }
@@ -1255,13 +1300,13 @@ device_context_port_grabbed (DeviceContext  *device_context,
                                      device_context->device,
                                      port);
 
-    mm_dbg ("[plugin manager] task %s: new support task for port",
-            port_context->name);
+    mm_obj_dbg (self, "task %s: new support task for port",
+                port_context->name);
 
     /* Îf still waiting the min wait time, store it in the waiting list */
     if (device_context->min_wait_time_id) {
-        mm_dbg ("[plugin manager) task %s: deferred until min wait time elapsed",
-                port_context->name);
+        mm_obj_dbg (self, "task %s: deferred until min wait time elapsed",
+                    port_context->name);
         /* Store the port reference in the list within the device */
         device_context->wait_port_contexts = g_list_prepend (device_context->wait_port_contexts, port_context);
         return;
@@ -1278,12 +1323,14 @@ device_context_port_grabbed (DeviceContext  *device_context,
 static gboolean
 device_context_cancel (DeviceContext *device_context)
 {
+    MMPluginManager *self;
+
     /* If cancelled already, do nothing */
     if (g_cancellable_is_cancelled (device_context->cancellable))
         return FALSE;
 
-    mm_dbg ("[plugin manager) task %s: cancellation requested",
-            device_context->name);
+    self = g_task_get_source_object (device_context->task);
+    mm_obj_dbg (self, "task %s: cancellation requested", device_context->name);
 
     /* The device context is cancelled now */
     g_cancellable_cancel (device_context->cancellable);
@@ -1502,7 +1549,7 @@ mm_plugin_manager_device_support_check (MMPluginManager     *self,
      * Note that we handle cancellations ourselves, as we don't want the caller
      * to be required to keep track of a GCancellable for each of these tasks.
      */
-    task = g_task_new (G_OBJECT (self), NULL, callback, user_data);
+    task = g_task_new (self, NULL, callback, user_data);
 
     /* Fail if there is already a task for the same device */
     device_context = plugin_manager_peek_device_context (self, device);
@@ -1520,8 +1567,8 @@ mm_plugin_manager_device_support_check (MMPluginManager     *self,
     /* Track the device context in the list within the plugin manager. */
     self->priv->device_contexts = g_list_prepend (self->priv->device_contexts, device_context);
 
-    mm_dbg ("[plugin manager] task %s: new support task for device: %s",
-            device_context->name, mm_device_get_uid (device_context->device));
+    mm_obj_dbg (self, "task %s: new support task for device: %s",
+                device_context->name, mm_device_get_uid (device_context->device));
 
     /* Run device context */
     device_context_run (self,
@@ -1558,6 +1605,14 @@ mm_plugin_manager_peek_plugin (MMPluginManager *self,
 
 /*****************************************************************************/
 
+const gchar **
+mm_plugin_manager_get_subsystems (MMPluginManager *self)
+{
+    return (const gchar **) self->priv->subsystems;
+}
+
+/*****************************************************************************/
+
 static void
 register_plugin_whitelist_tags (MMPluginManager *self,
                                 MMPlugin        *plugin)
@@ -1571,6 +1626,21 @@ register_plugin_whitelist_tags (MMPluginManager *self,
     tags = mm_plugin_get_allowed_udev_tags (plugin);
     for (i = 0; tags && tags[i]; i++)
         mm_filter_register_plugin_whitelist_tag (self->priv->filter, tags[i]);
+}
+
+static void
+register_plugin_whitelist_vendor_ids (MMPluginManager *self,
+                                       MMPlugin        *plugin)
+{
+    const guint16 *vendor_ids;
+    guint          i;
+
+    if (!mm_filter_check_rule_enabled (self->priv->filter, MM_FILTER_RULE_PLUGIN_WHITELIST))
+        return;
+
+    vendor_ids = mm_plugin_get_allowed_vendor_ids (plugin);
+    for (i = 0; vendor_ids && vendor_ids[i]; i++)
+        mm_filter_register_plugin_whitelist_vendor_id (self->priv->filter, vendor_ids[i]);
 }
 
 static void
@@ -1589,57 +1659,58 @@ register_plugin_whitelist_product_ids (MMPluginManager *self,
 }
 
 static MMPlugin *
-load_plugin (const gchar *path)
+load_plugin (MMPluginManager *self,
+             const gchar     *path)
 {
-    MMPlugin *plugin = NULL;
-    GModule *module;
-    MMPluginCreateFunc plugin_create_func;
-    gint *major_plugin_version;
-    gint *minor_plugin_version;
-    gchar *path_display;
+    MMPlugin           *plugin = NULL;
+    GModule            *module;
+    MMPluginCreateFunc  plugin_create_func;
+    gint               *major_plugin_version;
+    gint               *minor_plugin_version;
+    gchar              *path_display;
 
     /* Get printable UTF-8 string of the path */
     path_display = g_filename_display_name (path);
 
     module = g_module_open (path, 0);
     if (!module) {
-        mm_warn ("[plugin manager] could not load plugin '%s': %s", path_display, g_module_error ());
+        mm_obj_warn (self, "could not load plugin '%s': %s", path_display, g_module_error ());
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_plugin_major_version", (gpointer *) &major_plugin_version)) {
-        mm_warn ("[plugin manager] could not load plugin '%s': Missing major version info", path_display);
+        mm_obj_warn (self, "could not load plugin '%s': Missing major version info", path_display);
         goto out;
     }
 
     if (*major_plugin_version != MM_PLUGIN_MAJOR_VERSION) {
-        mm_warn ("[plugin manager] could not load plugin '%s': Plugin major version %d, %d is required",
+        mm_obj_warn (self, "could not load plugin '%s': Plugin major version %d, %d is required",
                  path_display, *major_plugin_version, MM_PLUGIN_MAJOR_VERSION);
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_plugin_minor_version", (gpointer *) &minor_plugin_version)) {
-        mm_warn ("[plugin manager] could not load plugin '%s': Missing minor version info", path_display);
+        mm_obj_warn (self, "could not load plugin '%s': Missing minor version info", path_display);
         goto out;
     }
 
     if (*minor_plugin_version != MM_PLUGIN_MINOR_VERSION) {
-        mm_warn ("[plugin manager] could not load plugin '%s': Plugin minor version %d, %d is required",
+        mm_obj_warn (self, "could not load plugin '%s': Plugin minor version %d, %d is required",
                    path_display, *minor_plugin_version, MM_PLUGIN_MINOR_VERSION);
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_plugin_create", (gpointer *) &plugin_create_func)) {
-        mm_warn ("[plugin manager] could not load plugin '%s': %s", path_display, g_module_error ());
+        mm_obj_warn (self, "could not load plugin '%s': %s", path_display, g_module_error ());
         goto out;
     }
 
     plugin = (*plugin_create_func) ();
     if (plugin) {
-        mm_dbg ("[plugin manager] loaded plugin '%s' from '%s'", mm_plugin_get_name (plugin), path_display);
+        mm_obj_dbg (self, "loaded plugin '%s' from '%s'", mm_plugin_get_name (plugin), path_display);
         g_object_weak_ref (G_OBJECT (plugin), (GWeakNotify) g_module_close, module);
     } else
-        mm_warn ("[plugin manager] could not load plugin '%s': initialization failed", path_display);
+        mm_obj_warn (self, "could not load plugin '%s': initialization failed", path_display);
 
 out:
     if (module && !plugin)
@@ -1651,7 +1722,8 @@ out:
 }
 
 static void
-load_shared (const gchar *path)
+load_shared (MMPluginManager *self,
+             const gchar     *path)
 {
     GModule      *module;
     gchar        *path_display;
@@ -1664,38 +1736,38 @@ load_shared (const gchar *path)
 
     module = g_module_open (path, 0);
     if (!module) {
-        mm_warn ("[plugin manager] could not load shared '%s': %s", path_display, g_module_error ());
+        mm_obj_warn (self, "could not load shared '%s': %s", path_display, g_module_error ());
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_shared_major_version", (gpointer *) &major_shared_version)) {
-        mm_warn ("[plugin manager] could not load shared '%s': Missing major version info", path_display);
+        mm_obj_warn (self, "could not load shared '%s': Missing major version info", path_display);
         goto out;
     }
 
     if (*major_shared_version != MM_SHARED_MAJOR_VERSION) {
-        mm_warn ("[plugin manager] could not load shared '%s': Shared major version %d, %d is required",
-                 path_display, *major_shared_version, MM_SHARED_MAJOR_VERSION);
+        mm_obj_warn (self, "could not load shared '%s': Shared major version %d, %d is required",
+                     path_display, *major_shared_version, MM_SHARED_MAJOR_VERSION);
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_shared_minor_version", (gpointer *) &minor_shared_version)) {
-        mm_warn ("[plugin manager] could not load shared '%s': Missing minor version info", path_display);
+        mm_obj_warn (self, "could not load shared '%s': Missing minor version info", path_display);
         goto out;
     }
 
     if (*minor_shared_version != MM_SHARED_MINOR_VERSION) {
-        mm_warn ("[plugin manager] could not load shared '%s': Shared minor version %d, %d is required",
-                   path_display, *minor_shared_version, MM_SHARED_MINOR_VERSION);
+        mm_obj_warn (self, "could not load shared '%s': Shared minor version %d, %d is required",
+                     path_display, *minor_shared_version, MM_SHARED_MINOR_VERSION);
         goto out;
     }
 
     if (!g_module_symbol (module, "mm_shared_name", (gpointer *) &shared_name)) {
-        mm_warn ("[plugin manager] could not load shared '%s': Missing name", path_display);
+        mm_obj_warn (self, "could not load shared '%s': Missing name", path_display);
         goto out;
     }
 
-    mm_dbg ("[plugin manager] loaded shared '%s' utils from '%s'", *shared_name, path_display);
+    mm_obj_dbg (self, "loaded shared '%s' utils from '%s'", *shared_name, path_display);
 
 out:
     if (module && !(*shared_name))
@@ -1705,15 +1777,17 @@ out:
 }
 
 static gboolean
-load_plugins (MMPluginManager *self,
-              GError **error)
+load_plugins (MMPluginManager  *self,
+              GError          **error)
 {
-    GDir *dir = NULL;
-    const gchar *fname;
-    gchar *plugindir_display = NULL;
-    GList *shared_paths = NULL;
-    GList *plugin_paths = NULL;
-    GList *l;
+    GDir             *dir = NULL;
+    const gchar      *fname;
+    GList            *shared_paths = NULL;
+    GList            *plugin_paths = NULL;
+    GList            *l;
+    GPtrArray        *subsystems = NULL;
+    g_autofree gchar *subsystems_str = NULL;
+    g_autofree gchar *plugindir_display = NULL;
 
     if (!g_module_supported ()) {
         g_set_error (error,
@@ -1726,7 +1800,7 @@ load_plugins (MMPluginManager *self,
     /* Get printable UTF-8 string of the path */
     plugindir_display = g_filename_display_name (self->priv->plugin_dir);
 
-    mm_dbg ("[plugin manager] looking for plugins in '%s'", plugindir_display);
+    mm_obj_dbg (self, "looking for plugins in '%s'", plugindir_display);
     dir = g_dir_open (self->priv->plugin_dir, 0, NULL);
     if (!dir) {
         g_set_error (error,
@@ -1748,31 +1822,53 @@ load_plugins (MMPluginManager *self,
 
     /* Load all shared utils */
     for (l = shared_paths; l; l = g_list_next (l))
-        load_shared ((const gchar *)(l->data));
+        load_shared (self, (const gchar *)(l->data));
 
     /* Load all plugins */
+    subsystems = g_ptr_array_new ();
     for (l = plugin_paths; l; l = g_list_next (l)) {
-        MMPlugin *plugin;
+        MMPlugin     *plugin;
+        const gchar **plugin_subsystems;
+        guint         i;
 
-        plugin = load_plugin ((const gchar *)(l->data));
+        plugin = load_plugin (self, (const gchar *)(l->data));
         if (!plugin)
             continue;
 
-        if (g_str_equal (mm_plugin_get_name (plugin), MM_PLUGIN_GENERIC_NAME))
-            /* Generic plugin */
+        /* Ignore plugins that don't specify subsystems */
+        plugin_subsystems = mm_plugin_get_allowed_subsystems (plugin);
+        if (!plugin_subsystems) {
+            mm_obj_warn (self, "plugin '%s' doesn't specify allowed subsystems: ignored",
+                         mm_plugin_get_name (plugin));
+            continue;
+        }
+
+        /* Process generic plugin */
+        if (mm_plugin_is_generic (plugin)) {
+            if (self->priv->generic) {
+                mm_obj_warn (self, "plugin '%s' is generic and another one is already registered: ignored",
+                             mm_plugin_get_name (plugin));
+                continue;
+            }
             self->priv->generic = plugin;
-        else
-            /* Vendor specific plugin */
+        } else
             self->priv->plugins = g_list_append (self->priv->plugins, plugin);
 
+        /* Track required subsystems, avoiding duplicates in the list */
+        for (i = 0; plugin_subsystems[i]; i++) {
+            if (!g_ptr_array_find_with_equal_func (subsystems, plugin_subsystems[i], g_str_equal, NULL))
+                g_ptr_array_add (subsystems, g_strdup (plugin_subsystems[i]));
+        }
+
         /* Register plugin whitelist rules in filter, if any */
-        register_plugin_whitelist_tags (self, plugin);
+        register_plugin_whitelist_tags        (self, plugin);
+        register_plugin_whitelist_vendor_ids  (self, plugin);
         register_plugin_whitelist_product_ids (self, plugin);
     }
 
     /* Check the generic plugin once all looped */
     if (!self->priv->generic)
-        mm_warn ("[plugin manager] generic plugin not loaded");
+        mm_obj_dbg (self, "generic plugin not loaded");
 
     /* Treat as error if we don't find any plugin */
     if (!self->priv->plugins && !self->priv->generic) {
@@ -1784,19 +1880,42 @@ load_plugins (MMPluginManager *self,
         goto out;
     }
 
-    mm_dbg ("[plugin manager] successfully loaded %u plugins",
-            g_list_length (self->priv->plugins) + !!self->priv->generic);
+    /* Validate required subsystems */
+    if (!subsystems->len) {
+        g_set_error (error,
+                     MM_CORE_ERROR,
+                     MM_CORE_ERROR_NO_PLUGINS,
+                     "empty list of subsystems required by plugins");
+        goto out;
+    }
+    /* Add trailing NULL and store as GStrv */
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
+    subsystems_str = g_strjoinv (", ", self->priv->subsystems);
+
+    mm_obj_dbg (self, "successfully loaded %u plugins registering %u subsystems: %s",
+                g_list_length (self->priv->plugins) + !!self->priv->generic,
+                g_strv_length (self->priv->subsystems), subsystems_str);
 
 out:
     g_list_free_full (shared_paths, g_free);
     g_list_free_full (plugin_paths, g_free);
     if (dir)
         g_dir_close (dir);
-    g_free (plugindir_display);
 
     /* Return TRUE if at least one plugin found */
     return (self->priv->plugins || self->priv->generic);
 }
+
+/*****************************************************************************/
+
+static gchar *
+log_object_build_id (MMLogObject *_self)
+{
+    return g_strdup ("plugin-manager");
+}
+
+/*****************************************************************************/
 
 MMPluginManager *
 mm_plugin_manager_new (const gchar  *plugin_dir,
@@ -1812,12 +1931,12 @@ mm_plugin_manager_new (const gchar  *plugin_dir,
 }
 
 static void
-mm_plugin_manager_init (MMPluginManager *manager)
+mm_plugin_manager_init (MMPluginManager *self)
 {
     /* Initialize opaque pointer to private data */
-    manager->priv = G_TYPE_INSTANCE_GET_PRIVATE (manager,
-                                                 MM_TYPE_PLUGIN_MANAGER,
-                                                 MMPluginManagerPrivate);
+    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self,
+                                              MM_TYPE_PLUGIN_MANAGER,
+                                              MMPluginManagerPrivate);
 }
 
 static void
@@ -1877,17 +1996,11 @@ dispose (GObject *object)
 {
     MMPluginManager *self = MM_PLUGIN_MANAGER (object);
 
-    /* Cleanup list of plugins */
-    if (self->priv->plugins) {
-        g_list_free_full (self->priv->plugins, g_object_unref);
-        self->priv->plugins = NULL;
-    }
+    g_list_free_full (g_steal_pointer (&self->priv->plugins), g_object_unref);
     g_clear_object (&self->priv->generic);
-
-    g_free (self->priv->plugin_dir);
-    self->priv->plugin_dir = NULL;
-
+    g_clear_pointer (&self->priv->plugin_dir, g_free);
     g_clear_object (&self->priv->filter);
+    g_clear_pointer (&self->priv->subsystems, g_strfreev);
 
     G_OBJECT_CLASS (mm_plugin_manager_parent_class)->dispose (object);
 }
@@ -1896,6 +2009,12 @@ static void
 initable_iface_init (GInitableIface *iface)
 {
     iface->init = initable_init;
+}
+
+static void
+log_object_iface_init (MMLogObjectInterface *iface)
+{
+    iface->build_id = log_object_build_id;
 }
 
 static void

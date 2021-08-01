@@ -34,7 +34,7 @@
 #include "libqcdm/src/utils.h"
 #include "libqcdm/src/com.h"
 #include "libqcdm/src/errors.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 typedef struct {
     int master;
@@ -54,7 +54,7 @@ wait_for_child (TestData *d, guint32 timeout)
         status = 0;
         ret = waitpid (d->child, &status, WNOHANG);
         g_get_current_time (&now);
-        if (d->child && (now.tv_sec - start.tv_sec > timeout)) {
+        if (d->child && (now.tv_sec - start.tv_sec > (glong)timeout)) {
             /* Kill it */
             if (g_test_verbose ())
                 g_message ("Killing running child process %d", d->child);
@@ -435,26 +435,6 @@ test_pty_cleanup (TestData *d)
             close (d->slave);
         memset (d, 0, sizeof (*d));
     }
-}
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
 }
 
 typedef void (*TCFunc) (TestData *, gconstpointer);

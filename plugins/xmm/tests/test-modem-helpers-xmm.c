@@ -22,7 +22,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-test.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-xmm.h"
 
@@ -45,7 +45,7 @@ validate_xact_test_response (const gchar                  *response,
     gboolean  ret;
     guint     i;
 
-    ret = mm_xmm_parse_xact_test_response (response, &modes, &bands, &error);
+    ret = mm_xmm_parse_xact_test_response (response, NULL, &modes, &bands, &error);
     g_assert_no_error (error);
     g_assert (ret);
 
@@ -617,6 +617,7 @@ test_xcesq_response_to_signal (void)
         MMSignal *lte  = NULL;
 
         success = mm_xmm_xcesq_response_to_signal_info (xcesq_response_tests[i].str,
+                                                        NULL,
                                                         &gsm, &umts, &lte,
                                                         &error);
         g_assert_no_error (error);
@@ -752,26 +753,6 @@ test_xlcsslp_queries (void)
 }
 
 /*****************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32     level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {

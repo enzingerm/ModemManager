@@ -21,7 +21,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-test.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-simtech.h"
 
@@ -52,7 +52,7 @@ common_test_clcc_urc (const gchar      *urc,
     str = g_match_info_fetch (match_info, 0);
     g_assert (str);
 
-    result = mm_simtech_parse_clcc_list (str, &call_info_list, &error);
+    result = mm_simtech_parse_clcc_list (str, NULL, &call_info_list, &error);
     g_assert_no_error (error);
     g_assert (result);
 
@@ -316,26 +316,6 @@ test_rxdtmf_urc_one_cr (void)
 }
 
 /*****************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {

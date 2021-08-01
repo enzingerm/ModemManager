@@ -104,6 +104,9 @@ struct _MMBaseModemClass {
 };
 
 GType mm_base_modem_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMBaseModem, g_object_unref)
+
+guint     mm_base_modem_get_dbus_id  (MMBaseModem *self);
 
 gboolean  mm_base_modem_grab_port    (MMBaseModem         *self,
                                       MMKernelDevice      *kernel_device,
@@ -122,14 +125,6 @@ MMPortSerialQcdm *mm_base_modem_peek_port_qcdm         (MMBaseModem *self);
 MMPortSerialAt   *mm_base_modem_peek_port_gps_control  (MMBaseModem *self);
 MMPortSerialGps  *mm_base_modem_peek_port_gps          (MMBaseModem *self);
 MMPortSerial     *mm_base_modem_peek_port_audio        (MMBaseModem *self);
-#if defined WITH_QMI
-MMPortQmi        *mm_base_modem_peek_port_qmi          (MMBaseModem *self);
-MMPortQmi        *mm_base_modem_peek_port_qmi_for_data (MMBaseModem *self, MMPort *data, GError **error);
-#endif
-#if defined WITH_MBIM
-MMPortMbim       *mm_base_modem_peek_port_mbim          (MMBaseModem *self);
-MMPortMbim       *mm_base_modem_peek_port_mbim_for_data (MMBaseModem *self, MMPort *data, GError **error);
-#endif
 MMPortSerialAt   *mm_base_modem_peek_best_at_port      (MMBaseModem *self, GError **error);
 MMPort           *mm_base_modem_peek_best_data_port    (MMBaseModem *self, MMPortType type);
 GList            *mm_base_modem_peek_data_ports        (MMBaseModem *self);
@@ -140,14 +135,6 @@ MMPortSerialQcdm *mm_base_modem_get_port_qcdm         (MMBaseModem *self);
 MMPortSerialAt   *mm_base_modem_get_port_gps_control  (MMBaseModem *self);
 MMPortSerialGps  *mm_base_modem_get_port_gps          (MMBaseModem *self);
 MMPortSerial     *mm_base_modem_get_port_audio        (MMBaseModem *self);
-#if defined WITH_QMI
-MMPortQmi        *mm_base_modem_get_port_qmi          (MMBaseModem *self);
-MMPortQmi        *mm_base_modem_get_port_qmi_for_data (MMBaseModem *self, MMPort *data, GError **error);
-#endif
-#if defined WITH_MBIM
-MMPortMbim       *mm_base_modem_get_port_mbim          (MMBaseModem *self);
-MMPortMbim       *mm_base_modem_get_port_mbim_for_data (MMBaseModem *self, MMPort *data, GError **error);
-#endif
 MMPortSerialAt   *mm_base_modem_get_best_at_port      (MMBaseModem *self, GError **error);
 MMPort           *mm_base_modem_get_best_data_port    (MMBaseModem *self, MMPortType type);
 GList            *mm_base_modem_get_data_ports        (MMBaseModem *self);
@@ -211,5 +198,7 @@ void     mm_base_modem_disable        (MMBaseModem *self,
 gboolean mm_base_modem_disable_finish (MMBaseModem *self,
                                        GAsyncResult *res,
                                        GError **error);
+
+void mm_base_modem_process_sim_event (MMBaseModem *self);
 
 #endif /* MM_BASE_MODEM_H */

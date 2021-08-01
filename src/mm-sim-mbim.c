@@ -24,9 +24,10 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
+#include "mm-broadband-modem-mbim.h"
 #include "mm-error-helpers.h"
 #include "mm-iface-modem.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers-mbim.h"
 #include "mm-sim-mbim.h"
 
@@ -48,7 +49,7 @@ peek_device (gpointer self,
                   NULL);
     g_assert (MM_IS_BASE_MODEM (modem));
 
-    port = mm_base_modem_peek_port_mbim (modem);
+    port = mm_broadband_modem_mbim_peek_port_mbim (MM_BROADBAND_MODEM_MBIM (modem));
     g_object_unref (modem);
 
     if (!port) {
@@ -382,10 +383,10 @@ pin_set_enter_ready (MbimDevice *device,
                 /* Sending PIN failed, build a better error to report */
                 if (pin_type == MBIM_PIN_TYPE_PIN1 && pin_state == MBIM_PIN_STATE_LOCKED) {
                     g_error_free (error);
-                    error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_INCORRECT_PASSWORD);
+                    error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_INCORRECT_PASSWORD, self);
                 } else if (pin_type == MBIM_PIN_TYPE_PUK1 && pin_state == MBIM_PIN_STATE_LOCKED) {
                     g_error_free (error);
-                    error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_SIM_PUK);
+                    error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_SIM_PUK, self);
                 }
             }
         }
@@ -416,7 +417,7 @@ send_pin (MMBaseSim *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    mm_dbg ("Sending PIN...");
+    mm_obj_dbg (self, "sending PIN...");
     message = (mbim_message_pin_set_new (
                    MBIM_PIN_TYPE_PIN1,
                    MBIM_PIN_OPERATION_ENTER,
@@ -480,9 +481,9 @@ puk_set_enter_ready (MbimDevice *device,
                 if (pin_type == MBIM_PIN_TYPE_PUK1 && pin_state == MBIM_PIN_STATE_LOCKED) {
                     g_error_free (error);
                     if (remaining_attempts == 0)
-                        error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_SIM_WRONG);
+                        error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_SIM_WRONG, self);
                     else
-                        error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_INCORRECT_PASSWORD);
+                        error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_INCORRECT_PASSWORD, self);
                 }
             }
         }
@@ -514,7 +515,7 @@ send_puk (MMBaseSim *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    mm_dbg ("Sending PUK...");
+    mm_obj_dbg (self, "sending PUK...");
     message = (mbim_message_pin_set_new (
                    MBIM_PIN_TYPE_PUK1,
                    MBIM_PIN_OPERATION_ENTER,
@@ -605,7 +606,7 @@ enable_pin (MMBaseSim *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    mm_dbg ("%s PIN ...", enabled ? "Enabling" : "Disabling");
+    mm_obj_dbg (self, "%s PIN ...", enabled ? "enabling" : "disabling");
     message = (mbim_message_pin_set_new (
                    MBIM_PIN_TYPE_PIN1,
                    enabled ? MBIM_PIN_OPERATION_ENABLE : MBIM_PIN_OPERATION_DISABLE,
@@ -696,7 +697,7 @@ change_pin (MMBaseSim *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    mm_dbg ("Changing PIN");
+    mm_obj_dbg (self, "changing PIN...");
     message = (mbim_message_pin_set_new (
                    MBIM_PIN_TYPE_PIN1,
                    MBIM_PIN_OPERATION_CHANGE,
@@ -752,6 +753,7 @@ mm_sim_mbim_new (MMBaseModem *modem,
                                 callback,
                                 user_data,
                                 MM_BASE_SIM_MODEM, modem,
+                                "active", TRUE, /* by default always active */
                                 NULL);
 }
 

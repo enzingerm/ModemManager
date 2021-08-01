@@ -26,12 +26,11 @@
 
 #include "mm-bearer-iridium.h"
 #include "mm-base-modem-at.h"
-#include "mm-log.h"
 
 /* Allow up to 200s to get a proper IP connection */
 #define BEARER_IRIDIUM_IP_TIMEOUT_DEFAULT 200
 
-G_DEFINE_TYPE (MMBearerIridium, mm_bearer_iridium, MM_TYPE_BASE_BEARER);
+G_DEFINE_TYPE (MMBearerIridium, mm_bearer_iridium, MM_TYPE_BASE_BEARER)
 
 /*****************************************************************************/
 /* Connect */
@@ -166,7 +165,7 @@ service_type_ready (MMBaseModem *modem,
         modem,
         ctx->primary,
         "ATDT008816000025",
-        60,
+        MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
         FALSE,
         FALSE, /* raw */
         NULL, /* cancellable */

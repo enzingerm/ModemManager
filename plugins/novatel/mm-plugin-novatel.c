@@ -31,7 +31,7 @@
 #include "mm-common-novatel.h"
 #include "mm-private-boxed-types.h"
 #include "mm-broadband-modem-novatel.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 #if defined WITH_QMI
 #include "mm-broadband-modem-qmi.h"
@@ -55,7 +55,7 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered Novatel modem found...");
+        mm_obj_dbg (self, "QMI-powered Novatel modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_new (uid,
                                                           drivers,
                                                           mm_plugin_get_name (self),
@@ -76,7 +76,7 @@ create_modem (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     static const guint16 vendors[] = { 0x1410, 0 };
     static const mm_uint16_pair forbidden_products[] = { { 0x1410, 0x9010 }, /* Novatel E362 */
                                                          { 0, 0 } };
@@ -87,7 +87,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_NOVATEL,
-                      MM_PLUGIN_NAME,                  "Novatel",
+                      MM_PLUGIN_NAME,                  MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,    subsystems,
                       MM_PLUGIN_ALLOWED_VENDOR_IDS,    vendors,
                       MM_PLUGIN_FORBIDDEN_PRODUCT_IDS, forbidden_products,

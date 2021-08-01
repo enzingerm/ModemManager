@@ -44,13 +44,14 @@
 #include "mm-auth-provider.h"
 #include "mm-plugin.h"
 #include "mm-filter.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
-static void initable_iface_init (GInitableIface *iface);
+static void initable_iface_init   (GInitableIface       *iface);
+static void log_object_iface_init (MMLogObjectInterface *iface);
 
 G_DEFINE_TYPE_EXTENDED (MMBaseManager, mm_base_manager, MM_GDBUS_TYPE_ORG_FREEDESKTOP_MODEM_MANAGER1_SKELETON, 0,
-                        G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE,
-                                               initable_iface_init));
+                        G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE, initable_iface_init)
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_LOG_OBJECT, log_object_iface_init))
 
 enum {
     PROP_0,
@@ -136,17 +137,28 @@ find_device_by_port (MMBaseManager  *manager,
 }
 
 static MMDevice *
+find_device_by_port_name (MMBaseManager *manager,
+                          const gchar   *subsystem,
+                          const gchar   *name)
+{
+    GHashTableIter iter;
+    gpointer key, value;
+
+    g_hash_table_iter_init (&iter, manager->priv->devices);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        MMDevice *candidate = MM_DEVICE (value);
+
+        if (mm_device_owns_port_name (candidate, subsystem, name))
+            return candidate;
+    }
+    return NULL;
+}
+
+static MMDevice *
 find_device_by_physdev_uid (MMBaseManager *self,
                             const gchar   *physdev_uid)
 {
     return g_hash_table_lookup (self->priv->devices, physdev_uid);
-}
-
-static MMDevice *
-find_device_by_kernel_device (MMBaseManager  *manager,
-                              MMKernelDevice *kernel_device)
-{
-    return find_device_by_physdev_uid (manager, mm_kernel_device_get_physdev_uid (kernel_device));
 }
 
 /*****************************************************************************/
@@ -180,8 +192,8 @@ device_support_check_ready (MMPluginManager          *plugin_manager,
     /* Receive plugin result from the plugin manager */
     plugin = mm_plugin_manager_device_support_check_finish (plugin_manager, res, &error);
     if (!plugin) {
-        mm_info ("Couldn't check support for device '%s': %s",
-                 mm_device_get_uid (ctx->device), error->message);
+        mm_obj_info (ctx->self, "couldn't check support for device '%s': %s",
+                     mm_device_get_uid (ctx->device), error->message);
         g_error_free (error);
         g_hash_table_remove (ctx->self->priv->devices, mm_device_get_uid (ctx->device));
         find_device_support_context_free (ctx);
@@ -193,8 +205,8 @@ device_support_check_ready (MMPluginManager          *plugin_manager,
     g_object_unref (plugin);
 
     if (!mm_device_create_modem (ctx->device, &error)) {
-        mm_warn ("Couldn't create modem for device '%s': %s",
-                 mm_device_get_uid (ctx->device), error->message);
+        mm_obj_warn (ctx->self, "couldn't create modem for device '%s': %s",
+                     mm_device_get_uid (ctx->device), error->message);
         g_error_free (error);
         g_hash_table_remove (ctx->self->priv->devices, mm_device_get_uid (ctx->device));
         find_device_support_context_free (ctx);
@@ -202,8 +214,8 @@ device_support_check_ready (MMPluginManager          *plugin_manager,
     }
 
     /* Modem now created */
-    mm_info ("Modem for device '%s' successfully created",
-             mm_device_get_uid (ctx->device));
+    mm_obj_info (ctx->self, "modem for device '%s' successfully created",
+                 mm_device_get_uid (ctx->device));
     find_device_support_context_free (ctx);
 }
 
@@ -214,108 +226,66 @@ static void     device_inhibited_track_port   (MMBaseManager  *self,
                                                MMKernelDevice *port,
                                                gboolean        manual_scan);
 static void     device_inhibited_untrack_port (MMBaseManager  *self,
-                                               MMKernelDevice *port);
+                                               const gchar    *subsystem,
+                                               const gchar    *name);
 
 static void
-device_removed (MMBaseManager  *self,
-                MMKernelDevice *kernel_device)
+device_removed (MMBaseManager *self,
+                const gchar   *subsystem,
+                const gchar   *name)
 {
-    MMDevice *device;
-    const gchar *subsys;
-    const gchar *name;
+    g_autoptr(MMDevice) device = NULL;
 
-    g_return_if_fail (kernel_device != NULL);
-
-    subsys = mm_kernel_device_get_subsystem (kernel_device);
-    name = mm_kernel_device_get_name (kernel_device);
-
-    if (!g_str_has_prefix (subsys, "usb") ||
-        (name && g_str_has_prefix (name, "cdc-wdm"))) {
-        /* Handle tty/net/wdm port removal */
-        device = find_device_by_port (self, kernel_device);
-        if (device) {
-            /* The callbacks triggered when the port is released or device support is
-             * cancelled may end up unreffing the device or removing it from the HT, and
-             * so in order to make sure the reference is still valid when we call
-             * support_check_cancel() and g_hash_table_remove(), we hold a full reference
-             * ourselves. */
-            g_object_ref (device);
-            {
-                mm_info ("(%s/%s): released by device '%s'", subsys, name, mm_device_get_uid (device));
-                mm_device_release_port (device, kernel_device);
-
-                /* If port probe list gets empty, remove the device object iself */
-                if (!mm_device_peek_port_probe_list (device)) {
-                    mm_dbg ("Removing empty device '%s'", mm_device_get_uid (device));
-                    if (mm_plugin_manager_device_support_check_cancel (self->priv->plugin_manager, device))
-                        mm_dbg ("Device support check has been cancelled");
-
-                    /* The device may have already been removed from the tracking HT, we
-                     * just try to remove it and if it fails, we ignore it */
-                    mm_device_remove_modem (device);
-                    g_hash_table_remove (self->priv->devices, mm_device_get_uid (device));
-                }
-            }
-            g_object_unref (device);
-            return;
-        }
-
+    g_assert (subsystem && name);
+    device = find_device_by_port_name (self, subsystem, name);
+    if (!device) {
         /* If the device was inhibited and the port is gone, untrack it.
          * This is only needed for ports that were tracked out of device objects.
          * In this case we don't rely on the physdev uid, as API-reported
          * remove kernel events may not include uid. */
-        device_inhibited_untrack_port (self, kernel_device);
+        device_inhibited_untrack_port (self, subsystem, name);
         return;
     }
 
-#if defined WITH_UDEV
-    /* When a USB modem is switching its USB configuration, udev may deliver
-     * the remove events of USB interfaces associated with the old USB
-     * configuration and the add events of USB interfaces associated with the
-     * new USB configuration in an interleaved fashion. As we don't want a
-     * remove event of an USB interface trigger the removal of a MMDevice for
-     * the special case being handled here, we ignore any remove event with
-     * DEVTYPE != usb_device.
-     */
-    if (g_strcmp0 (mm_kernel_device_get_property (kernel_device, "DEVTYPE"), "usb_device") != 0)
-        return;
-#endif
+    /* The callbacks triggered when the port is released or device support is
+     * cancelled may end up unreffing the device or removing it from the HT, and
+     * so in order to make sure the reference is still valid when we call
+     * support_check_cancel() and g_hash_table_remove(), we hold a full reference
+     * ourselves. */
+    g_object_ref (device);
 
-    /* This case is designed to handle the case where, at least with kernel 2.6.31, unplugging
-     * an in-use ttyACMx device results in udev generating remove events for the usb, but the
-     * ttyACMx device (subsystem tty) is not removed, since it was in-use.  So if we have not
-     * found a modem for the port (above), we're going to look here to see if we have a modem
-     * associated with the newly removed device.  If so, we'll remove the modem, since the
-     * device has been removed.  That way, if the device is reinserted later, we'll go through
-     * the process of exporting it.
-     */
-    device = find_device_by_kernel_device (self, kernel_device);
-    if (device) {
-        mm_dbg ("Removing device '%s'", mm_device_get_uid (device));
+    mm_obj_info (self, "port %s released by device '%s'", name, mm_device_get_uid (device));
+    mm_device_release_port_name (device, subsystem, name);
+
+    /* If port probe list gets empty, remove the device object iself */
+    if (!mm_device_peek_port_probe_list (device)) {
+        mm_obj_dbg (self, "removing empty device '%s'", mm_device_get_uid (device));
+        if (mm_plugin_manager_device_support_check_cancel (self->priv->plugin_manager, device))
+            mm_obj_dbg (self, "device support check has been cancelled");
+
+        /* The device may have already been removed from the tracking HT, we
+         * just try to remove it and if it fails, we ignore it */
         mm_device_remove_modem (device);
         g_hash_table_remove (self->priv->devices, mm_device_get_uid (device));
-        return;
     }
 }
 
 static void
-device_added (MMBaseManager  *manager,
+device_added (MMBaseManager  *self,
               MMKernelDevice *port,
               gboolean        hotplugged,
               gboolean        manual_scan)
 {
     MMDevice    *device;
     const gchar *physdev_uid;
-    const gchar *subsys;
     const gchar *name;
 
     g_return_if_fail (port != NULL);
 
-    subsys = mm_kernel_device_get_subsystem (port);
     name = mm_kernel_device_get_name (port);
 
-    mm_dbg ("(%s/%s): adding device at sysfs path: %s",
-            subsys, name, mm_kernel_device_get_sysfs_path (port));
+    mm_obj_dbg (self, "adding port %s at sysfs path: %s",
+                name, mm_kernel_device_get_sysfs_path (port));
 
     /* Ignore devices that aren't completely configured by udev yet.  If
      * ModemManager is started in parallel with udev, explicitly requesting
@@ -330,8 +300,8 @@ device_added (MMBaseManager  *manager,
         /* This could mean that device changed, losing its candidate
          * flags (such as Bluetooth RFCOMM devices upon disconnect.
          * Try to forget it. */
-        device_removed (manager, port);
-        mm_dbg ("(%s/%s): port not candidate", subsys, name);
+        device_removed (self, mm_kernel_device_get_subsystem (port), name);
+        mm_obj_dbg (self, "port %s not candidate", name);
         return;
     }
 
@@ -341,50 +311,48 @@ device_added (MMBaseManager  *manager,
     g_assert (physdev_uid);
 
     /* If the device is inhibited, do nothing else */
-    if (is_device_inhibited (manager, physdev_uid)) {
+    if (is_device_inhibited (self, physdev_uid)) {
         /* Note: we will not report as hotplugged an inhibited device port
          * because we don't know what was done with the port out of our
          * context. */
-        device_inhibited_track_port (manager, physdev_uid, port, manual_scan);
+        device_inhibited_track_port (self, physdev_uid, port, manual_scan);
         return;
     }
 
     /* Run port filter */
-    if (!mm_filter_port (manager->priv->filter, port, manual_scan))
+    if (!mm_filter_port (self->priv->filter, port, manual_scan))
         return;
 
     /* If already added, ignore new event */
-    if (find_device_by_port (manager, port)) {
-        mm_dbg ("(%s/%s): port already added", subsys, name);
+    if (find_device_by_port (self, port)) {
+        mm_obj_dbg (self, "port %s already added", name);
         return;
     }
 
     /* See if we already created an object to handle ports in this device */
-    device = find_device_by_physdev_uid (manager, physdev_uid);
+    device = find_device_by_physdev_uid (self, physdev_uid);
     if (!device) {
         FindDeviceSupportContext *ctx;
 
-        mm_dbg ("(%s/%s): first port in device %s",
-                subsys, name, physdev_uid);
+        mm_obj_dbg (self, "port %s is first in device %s", name, physdev_uid);
 
         /* Keep the device listed in the Manager */
-        device = mm_device_new (physdev_uid, hotplugged, FALSE, manager->priv->object_manager);
-        g_hash_table_insert (manager->priv->devices,
+        device = mm_device_new (physdev_uid, hotplugged, FALSE, self->priv->object_manager);
+        g_hash_table_insert (self->priv->devices,
                              g_strdup (physdev_uid),
                              device);
 
         /* Launch device support check */
         ctx = g_slice_new (FindDeviceSupportContext);
-        ctx->self = g_object_ref (manager);
+        ctx->self = g_object_ref (self);
         ctx->device = g_object_ref (device);
         mm_plugin_manager_device_support_check (
-            manager->priv->plugin_manager,
+            self->priv->plugin_manager,
             device,
             (GAsyncReadyCallback) device_support_check_ready,
             ctx);
     } else
-        mm_dbg ("(%s/%s): additional port in device %s",
-                subsys, name, physdev_uid);
+        mm_obj_dbg (self, "additional port %s in device %s", name, physdev_uid);
 
     /* Grab the port in the existing device. */
     mm_device_grab_port (device, port);
@@ -395,11 +363,10 @@ handle_kernel_event (MMBaseManager            *self,
                      MMKernelEventProperties  *properties,
                      GError                  **error)
 {
-    MMKernelDevice *kernel_device;
-    const gchar    *action;
-    const gchar    *subsystem;
-    const gchar    *name;
-    const gchar    *uid;
+    const gchar *action;
+    const gchar *subsystem;
+    const gchar *name;
+    const gchar *uid;
 
     action = mm_kernel_event_properties_get_action (properties);
     if (!action) {
@@ -417,6 +384,11 @@ handle_kernel_event (MMBaseManager            *self,
         return FALSE;
     }
 
+    if (!g_strv_contains (mm_plugin_manager_get_subsystems (self->priv->plugin_manager), subsystem)) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS, "Invalid 'subsystem' parameter given: '%s'", subsystem);
+        return FALSE;
+    }
+
     name = mm_kernel_event_properties_get_name (properties);
     if (!name) {
         g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS, "Missing mandatory parameter 'name'");
@@ -425,65 +397,65 @@ handle_kernel_event (MMBaseManager            *self,
 
     uid = mm_kernel_event_properties_get_uid (properties);
 
-    mm_dbg ("Kernel event reported:");
-    mm_dbg ("  action:    %s", action);
-    mm_dbg ("  subsystem: %s", subsystem);
-    mm_dbg ("  name:      %s", name);
-    mm_dbg ("  uid:       %s", uid ? uid : "n/a");
+    mm_obj_dbg (self, "kernel event reported:");
+    mm_obj_dbg (self, "  action:    %s", action);
+    mm_obj_dbg (self, "  subsystem: %s", subsystem);
+    mm_obj_dbg (self, "  name:      %s", name);
+    mm_obj_dbg (self, "  uid:       %s", uid ? uid : "n/a");
 
+    if (g_strcmp0 (action, "add") == 0) {
+        g_autoptr(MMKernelDevice) kernel_device = NULL;
 #if defined WITH_UDEV
-    kernel_device = mm_kernel_device_udev_new_from_properties (properties, error);
-#else
-    kernel_device = mm_kernel_device_generic_new (properties, error);
+        if (!mm_context_get_test_no_udev ())
+            kernel_device = mm_kernel_device_udev_new_from_properties (properties, error);
+        else
 #endif
+            kernel_device = mm_kernel_device_generic_new (properties, error);
+        if (!kernel_device)
+            return FALSE;
 
-    if (!kernel_device)
-        return FALSE;
-
-    if (g_strcmp0 (action, "add") == 0)
         device_added (self, kernel_device, TRUE, TRUE);
-    else if (g_strcmp0 (action, "remove") == 0)
-        device_removed (self, kernel_device);
-    else
-        g_assert_not_reached ();
-    g_object_unref (kernel_device);
+        return TRUE;
+    }
 
-    return TRUE;
+    if (g_strcmp0 (action, "remove") == 0) {
+        device_removed (self, subsystem, name);
+        return TRUE;
+    }
+
+    g_assert_not_reached ();
 }
 
 #if defined WITH_UDEV
 
 static void
-handle_uevent (GUdevClient *client,
-               const char *action,
-               GUdevDevice *device,
-               gpointer user_data)
+handle_uevent (MMBaseManager *self,
+               const gchar   *action,
+               GUdevDevice   *device)
 {
-    MMBaseManager *self = MM_BASE_MANAGER (user_data);
-    const gchar *subsys;
+    const gchar *subsystem;
     const gchar *name;
-    MMKernelDevice *kernel_device;
 
-    g_return_if_fail (action != NULL);
+    subsystem = g_udev_device_get_subsystem (device);
+    name      = g_udev_device_get_name      (device);
 
-    /* A bit paranoid */
-    subsys = g_udev_device_get_subsystem (device);
-    g_return_if_fail (subsys != NULL);
-    g_return_if_fail (g_str_equal (subsys, "tty") || g_str_equal (subsys, "net") || g_str_has_prefix (subsys, "usb"));
+    /* Valid udev devices must have subsystem and name set; if they don't have
+     * both things, we silently ignore them. */
+    if (!subsystem || !name)
+        return;
 
-    kernel_device = mm_kernel_device_udev_new (device);
+    if (g_str_equal (action, "add") || g_str_equal (action, "move") || g_str_equal (action, "change")) {
+        g_autoptr(MMKernelDevice) kernel_device = NULL;
 
-    /* We only care about tty/net and usb/cdc-wdm devices when adding modem ports,
-     * but for remove, also handle usb parent device remove events
-     */
-    name = mm_kernel_device_get_name (kernel_device);
-    if (   (g_str_equal (action, "add") || g_str_equal (action, "move") || g_str_equal (action, "change"))
-        && (!g_str_has_prefix (subsys, "usb") || (name && g_str_has_prefix (name, "cdc-wdm"))))
+        kernel_device = mm_kernel_device_udev_new (device);
         device_added (self, kernel_device, TRUE, FALSE);
-    else if (g_str_equal (action, "remove"))
-        device_removed (self, kernel_device);
+        return;
+    }
 
-    g_object_unref (kernel_device);
+    if (g_str_equal (action, "remove")) {
+        device_removed (self, subsystem, name);
+        return;
+    }
 }
 
 typedef struct {
@@ -495,11 +467,20 @@ typedef struct {
 static gboolean
 start_device_added_idle (StartDeviceAdded *ctx)
 {
-    MMKernelDevice *kernel_device;
+    const gchar *subsystem;
+    const gchar *name;
 
-    kernel_device = mm_kernel_device_udev_new (ctx->device);
-    device_added (ctx->self, kernel_device, FALSE, ctx->manual_scan);
-    g_object_unref (kernel_device);
+    subsystem = g_udev_device_get_subsystem (ctx->device);
+    name      = g_udev_device_get_name      (ctx->device);
+
+    /* Valid udev devices must have subsystem and name set; if they don't have
+     * both things, we silently ignore them. */
+    if (subsystem && name) {
+        g_autoptr(MMKernelDevice) kernel_device = NULL;
+
+        kernel_device = mm_kernel_device_udev_new (ctx->device);
+        device_added (ctx->self, kernel_device, FALSE, ctx->manual_scan);
+    }
 
     g_object_unref (ctx->self);
     g_object_unref (ctx->device);
@@ -525,44 +506,19 @@ static void
 process_scan (MMBaseManager *self,
               gboolean       manual_scan)
 {
-    GList *devices, *iter;
+    const gchar **subsystems;
+    guint         i;
 
-    devices = g_udev_client_query_by_subsystem (self->priv->udev, "tty");
-    for (iter = devices; iter; iter = g_list_next (iter)) {
-        start_device_added (self, G_UDEV_DEVICE (iter->data), manual_scan);
-        g_object_unref (G_OBJECT (iter->data));
-    }
-    g_list_free (devices);
+    subsystems = mm_plugin_manager_get_subsystems (self->priv->plugin_manager);
+    for (i = 0; subsystems[i]; i++) {
+        GList *devices;
+        GList *iter;
 
-    devices = g_udev_client_query_by_subsystem (self->priv->udev, "net");
-    for (iter = devices; iter; iter = g_list_next (iter)) {
-        start_device_added (self, G_UDEV_DEVICE (iter->data), manual_scan);
-        g_object_unref (G_OBJECT (iter->data));
-    }
-    g_list_free (devices);
-
-    devices = g_udev_client_query_by_subsystem (self->priv->udev, "usb");
-    for (iter = devices; iter; iter = g_list_next (iter)) {
-        const gchar *name;
-
-        name = g_udev_device_get_name (G_UDEV_DEVICE (iter->data));
-        if (name && g_str_has_prefix (name, "cdc-wdm"))
+        devices = g_udev_client_query_by_subsystem (self->priv->udev, subsystems[i]);
+        for (iter = devices; iter; iter = g_list_next (iter))
             start_device_added (self, G_UDEV_DEVICE (iter->data), manual_scan);
-        g_object_unref (G_OBJECT (iter->data));
+        g_list_free_full (devices, g_object_unref);
     }
-    g_list_free (devices);
-
-    /* Newer kernels report 'usbmisc' subsystem */
-    devices = g_udev_client_query_by_subsystem (self->priv->udev, "usbmisc");
-    for (iter = devices; iter; iter = g_list_next (iter)) {
-        const gchar *name;
-
-        name = g_udev_device_get_name (G_UDEV_DEVICE (iter->data));
-        if (name && g_str_has_prefix (name, "cdc-wdm"))
-            start_device_added (self, G_UDEV_DEVICE (iter->data), manual_scan);
-        g_object_unref (G_OBJECT (iter->data));
-    }
-    g_list_free (devices);
 }
 
 #endif
@@ -629,12 +585,13 @@ mm_base_manager_start (MMBaseManager *self,
     }
 
 #if defined WITH_UDEV
-    mm_dbg ("Starting %s device scan...", manual_scan ? "manual" : "automatic");
-    process_scan (self, manual_scan);
-    mm_dbg ("Finished device scan...");
-#else
-    mm_dbg ("Unsupported %s device scan...", manual_scan ? "manual" : "automatic");
+    if (!mm_context_get_test_no_udev ()) {
+        mm_obj_dbg (self, "starting %s device scan...", manual_scan ? "manual" : "automatic");
+        process_scan (self, manual_scan);
+        mm_obj_dbg (self, "finished device scan...");
+    } else
 #endif
+        mm_obj_dbg (self, "unsupported %s device scan...", manual_scan ? "manual" : "automatic");
 }
 
 /*****************************************************************************/
@@ -745,8 +702,8 @@ set_logging_context_free (SetLoggingContext *ctx)
 }
 
 static void
-set_logging_auth_ready (MMAuthProvider *authp,
-                        GAsyncResult *res,
+set_logging_auth_ready (MMAuthProvider    *authp,
+                        GAsyncResult      *res,
                         SetLoggingContext *ctx)
 {
     GError *error = NULL;
@@ -756,7 +713,7 @@ set_logging_auth_ready (MMAuthProvider *authp,
     else if (!mm_log_set_level (ctx->level, &error))
         g_dbus_method_invocation_take_error (ctx->invocation, error);
     else {
-        mm_info ("logging: level '%s'", ctx->level);
+        mm_obj_info (ctx->self, "logging: level '%s'", ctx->level);
         mm_gdbus_org_freedesktop_modem_manager1_complete_set_logging (
             MM_GDBUS_ORG_FREEDESKTOP_MODEM_MANAGER1 (ctx->self),
             ctx->invocation);
@@ -813,16 +770,17 @@ scan_devices_auth_ready (MMAuthProvider *authp,
         g_dbus_method_invocation_take_error (ctx->invocation, error);
     else {
 #if defined WITH_UDEV
-        /* Otherwise relaunch device scan */
-        mm_base_manager_start (MM_BASE_MANAGER (ctx->self), TRUE);
-        mm_gdbus_org_freedesktop_modem_manager1_complete_scan_devices (
-            MM_GDBUS_ORG_FREEDESKTOP_MODEM_MANAGER1 (ctx->self),
-            ctx->invocation);
-#else
-        g_dbus_method_invocation_return_error_literal (
-            ctx->invocation, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
-            "Cannot request manual scan of devices: unsupported");
+        if (!mm_context_get_test_no_udev ()) {
+            /* Otherwise relaunch device scan */
+            mm_base_manager_start (MM_BASE_MANAGER (ctx->self), TRUE);
+            mm_gdbus_org_freedesktop_modem_manager1_complete_scan_devices (
+                MM_GDBUS_ORG_FREEDESKTOP_MODEM_MANAGER1 (ctx->self),
+                ctx->invocation);
+        } else
 #endif
+            g_dbus_method_invocation_return_error_literal (
+                ctx->invocation, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
+                "Cannot request manual scan of devices: unsupported");
     }
 
     scan_devices_context_free (ctx);
@@ -876,7 +834,7 @@ report_kernel_event_auth_ready (MMAuthProvider           *authp,
         goto out;
 
 #if defined WITH_UDEV
-    if (ctx->self->priv->auto_scan) {
+    if (!mm_context_get_test_no_udev () && ctx->self->priv->auto_scan) {
         error = g_error_new_literal (MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
                                      "Cannot report kernel event: "
                                      "udev monitoring already in place");
@@ -891,9 +849,10 @@ report_kernel_event_auth_ready (MMAuthProvider           *authp,
     handle_kernel_event (ctx->self, properties, &error);
 
 out:
-    if (error)
+    if (error) {
+        mm_obj_warn (ctx->self, "couldn't handle kernel event: %s", error->message);
         g_dbus_method_invocation_take_error (ctx->invocation, error);
-    else
+    } else
         mm_gdbus_org_freedesktop_modem_manager1_complete_report_kernel_event (
             MM_GDBUS_ORG_FREEDESKTOP_MODEM_MANAGER1 (ctx->self),
             ctx->invocation);
@@ -970,7 +929,8 @@ is_device_inhibited (MMBaseManager *self,
 
 static void
 device_inhibited_untrack_port (MMBaseManager  *self,
-                               MMKernelDevice *kernel_port)
+                               const gchar    *subsystem,
+                               const gchar    *name)
 {
     GHashTableIter       iter;
     gchar               *uid;
@@ -984,10 +944,10 @@ device_inhibited_untrack_port (MMBaseManager  *self,
             InhibitedDevicePortInfo *port_info;
 
             port_info = (InhibitedDevicePortInfo *)(l->data);
-            if (mm_kernel_device_cmp (port_info->kernel_port, kernel_port)) {
-                mm_dbg ("(%s/%s): released while inhibited",
-                        mm_kernel_device_get_subsystem (kernel_port),
-                        mm_kernel_device_get_name (kernel_port));
+
+            if ((g_strcmp0 (subsystem, mm_kernel_device_get_subsystem (port_info->kernel_port)) == 0) &&
+                (g_strcmp0 (name, mm_kernel_device_get_name (port_info->kernel_port)) == 0)) {
+                mm_obj_dbg (self, "released port %s while inhibited", name);
                 inhibited_device_port_info_free (port_info);
                 info->port_infos = g_list_delete_link (info->port_infos, l);
                 return;
@@ -1018,9 +978,7 @@ device_inhibited_track_port (MMBaseManager  *self,
         }
     }
 
-    mm_dbg ("(%s/%s): added while inhibited",
-            mm_kernel_device_get_subsystem (kernel_port),
-            mm_kernel_device_get_name (kernel_port));
+    mm_obj_dbg (self, "added port %s while inhibited", mm_kernel_device_get_name (kernel_port));
 
     port_info = g_slice_new0 (InhibitedDevicePortInfo);
     port_info->kernel_port = g_object_ref (kernel_port);
@@ -1085,7 +1043,7 @@ remove_device_inhibition (MMBaseManager *self,
 
         /* Uninhibit device, which will create and expose the modem object */
         if (!mm_device_uninhibit (device, &error)) {
-            mm_warn ("Couldn't uninhibit device: %s", error->message);
+            mm_obj_warn (self, "couldn't uninhibit device: %s", error->message);
             g_error_free (error);
         }
     }
@@ -1096,7 +1054,7 @@ inhibit_sender_lost (GDBusConnection          *connection,
                      const gchar              *sender_name,
                      InhibitSenderLostContext *lost_ctx)
 {
-    mm_info ("Device inhibition teardown for uid '%s' (owner disappeared from bus)", lost_ctx->uid);
+    mm_obj_info (lost_ctx->self, "device inhibition teardown for uid '%s' (owner disappeared from bus)", lost_ctx->uid);
     remove_device_inhibition (lost_ctx->self, lost_ctx->uid);
 }
 
@@ -1151,7 +1109,7 @@ device_inhibit_ready (MMDevice             *device,
 
     g_hash_table_insert (ctx->self->priv->inhibited_devices, g_strdup (ctx->uid), info);
 
-    mm_info ("Device inhibition setup for uid '%s'", ctx->uid);
+    mm_obj_info (ctx->self, "device inhibition setup for uid '%s'", ctx->uid);
 
     mm_gdbus_org_freedesktop_modem_manager1_complete_inhibit_device (
         MM_GDBUS_ORG_FREEDESKTOP_MODEM_MANAGER1 (ctx->self),
@@ -1200,7 +1158,7 @@ base_manager_uninhibit_device (InhibitDeviceContext *ctx)
         return;
     }
 
-    mm_info ("Device inhibition teardown for uid '%s'", ctx->uid);
+    mm_obj_info (ctx->self, "device inhibition teardown for uid '%s'", ctx->uid);
     remove_device_inhibition (ctx->self, ctx->uid);
 
     mm_gdbus_org_freedesktop_modem_manager1_complete_inhibit_device (
@@ -1267,7 +1225,7 @@ handle_set_profile (MmGdbusTest *skeleton,
     gchar *physdev_uid;
     GError *error = NULL;
 
-    mm_info ("Test profile set to: '%s'", id);
+    mm_obj_info (self, "test profile set to: '%s'", id);
 
     /* Create device and keep it listed in the Manager */
     physdev_uid = g_strdup_printf ("/virtual/%s", id);
@@ -1284,23 +1242,23 @@ handle_set_profile (MmGdbusTest *skeleton,
                              MM_CORE_ERROR_NOT_FOUND,
                              "Requested plugin '%s' not found",
                              plugin_name);
-        mm_warn ("Couldn't set plugin for virtual device '%s': %s",
-                 mm_device_get_uid (device),
-                 error->message);
+        mm_obj_warn (self, "couldn't set plugin for virtual device '%s': %s",
+                     mm_device_get_uid (device),
+                     error->message);
         goto out;
     }
     mm_device_set_plugin (device, G_OBJECT (plugin));
 
     /* Create modem */
     if (!mm_device_create_modem (device, &error)) {
-        mm_warn ("Couldn't create modem for virtual device '%s': %s",
-                 mm_device_get_uid (device),
-                 error->message);
+        mm_obj_warn (self, "couldn't create modem for virtual device '%s': %s",
+                     mm_device_get_uid (device),
+                     error->message);
         goto out;
     }
 
-    mm_info ("Modem for virtual device '%s' successfully created",
-             mm_device_get_uid (device));
+    mm_obj_info (self, "modem for virtual device '%s' successfully created",
+                 mm_device_get_uid (device));
 
 out:
 
@@ -1313,6 +1271,14 @@ out:
         mm_gdbus_test_complete_set_profile (skeleton, invocation);
 
     return TRUE;
+}
+
+/*****************************************************************************/
+
+static gchar *
+log_object_build_id (MMLogObject *_self)
+{
+    return g_strdup ("base-manager");
 }
 
 /*****************************************************************************/
@@ -1342,52 +1308,52 @@ mm_base_manager_new (GDBusConnection  *connection,
 }
 
 static void
-set_property (GObject *object,
-              guint prop_id,
+set_property (GObject      *object,
+              guint         prop_id,
               const GValue *value,
-              GParamSpec *pspec)
+              GParamSpec   *pspec)
 {
-    MMBaseManagerPrivate *priv = MM_BASE_MANAGER (object)->priv;
+    MMBaseManager *self = MM_BASE_MANAGER (object);
 
     switch (prop_id) {
     case PROP_CONNECTION: {
         gboolean had_connection = FALSE;
 
-        if (priv->connection) {
+        if (self->priv->connection) {
             had_connection = TRUE;
-            g_object_unref (priv->connection);
+            g_object_unref (self->priv->connection);
         }
-        priv->connection = g_value_dup_object (value);
+        self->priv->connection = g_value_dup_object (value);
         /* Propagate connection loss to subobjects */
-        if (had_connection && !priv->connection) {
-            if (priv->object_manager) {
-                mm_dbg ("Stopping connection in object manager server");
-                g_dbus_object_manager_server_set_connection (priv->object_manager, NULL);
+        if (had_connection && !self->priv->connection) {
+            if (self->priv->object_manager) {
+                mm_obj_dbg (self, "stopping connection in object manager server");
+                g_dbus_object_manager_server_set_connection (self->priv->object_manager, NULL);
             }
-            if (priv->test_skeleton &&
-                g_dbus_interface_skeleton_get_connection (G_DBUS_INTERFACE_SKELETON (priv->test_skeleton))) {
-                mm_dbg ("Stopping connection in test skeleton");
-                g_dbus_interface_skeleton_unexport (G_DBUS_INTERFACE_SKELETON (priv->test_skeleton));
+            if (self->priv->test_skeleton &&
+                g_dbus_interface_skeleton_get_connection (G_DBUS_INTERFACE_SKELETON (self->priv->test_skeleton))) {
+                mm_obj_dbg (self, "stopping connection in test skeleton");
+                g_dbus_interface_skeleton_unexport (G_DBUS_INTERFACE_SKELETON (self->priv->test_skeleton));
             }
         }
         break;
     }
     case PROP_AUTO_SCAN:
-        priv->auto_scan = g_value_get_boolean (value);
+        self->priv->auto_scan = g_value_get_boolean (value);
         break;
     case PROP_FILTER_POLICY:
-        priv->filter_policy = g_value_get_flags (value);
+        self->priv->filter_policy = g_value_get_flags (value);
         break;
     case PROP_ENABLE_TEST:
-        priv->enable_test = g_value_get_boolean (value);
+        self->priv->enable_test = g_value_get_boolean (value);
         break;
     case PROP_PLUGIN_DIR:
-        g_free (priv->plugin_dir);
-        priv->plugin_dir = g_value_dup_string (value);
+        g_free (self->priv->plugin_dir);
+        self->priv->plugin_dir = g_value_dup_string (value);
         break;
     case PROP_INITIAL_KERNEL_EVENTS:
-        g_free (priv->initial_kernel_events);
-        priv->initial_kernel_events = g_value_dup_string (value);
+        g_free (self->priv->initial_kernel_events);
+        self->priv->initial_kernel_events = g_value_dup_string (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1396,31 +1362,31 @@ set_property (GObject *object,
 }
 
 static void
-get_property (GObject *object,
-              guint prop_id,
-              GValue *value,
+get_property (GObject    *object,
+              guint       prop_id,
+              GValue     *value,
               GParamSpec *pspec)
 {
-    MMBaseManagerPrivate *priv = MM_BASE_MANAGER (object)->priv;
+    MMBaseManager *self = MM_BASE_MANAGER (object);
 
     switch (prop_id) {
     case PROP_CONNECTION:
-        g_value_set_object (value, priv->connection);
+        g_value_set_object (value, self->priv->connection);
         break;
     case PROP_AUTO_SCAN:
-        g_value_set_boolean (value, priv->auto_scan);
+        g_value_set_boolean (value, self->priv->auto_scan);
         break;
     case PROP_FILTER_POLICY:
-        g_value_set_flags (value, priv->filter_policy);
+        g_value_set_flags (value, self->priv->filter_policy);
         break;
     case PROP_ENABLE_TEST:
-        g_value_set_boolean (value, priv->enable_test);
+        g_value_set_boolean (value, self->priv->enable_test);
         break;
     case PROP_PLUGIN_DIR:
-        g_value_set_string (value, priv->plugin_dir);
+        g_value_set_string (value, self->priv->plugin_dir);
         break;
     case PROP_INITIAL_KERNEL_EVENTS:
-        g_value_set_string (value, priv->initial_kernel_events);
+        g_value_set_string (value, self->priv->initial_kernel_events);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1429,45 +1395,32 @@ get_property (GObject *object,
 }
 
 static void
-mm_base_manager_init (MMBaseManager *manager)
+mm_base_manager_init (MMBaseManager *self)
 {
-    MMBaseManagerPrivate *priv;
-
     /* Setup private data */
-    manager->priv = priv = G_TYPE_INSTANCE_GET_PRIVATE (manager,
-                                                        MM_TYPE_BASE_MANAGER,
-                                                        MMBaseManagerPrivate);
+    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, MM_TYPE_BASE_MANAGER, MMBaseManagerPrivate);
 
     /* Setup authorization provider */
-    priv->authp = mm_auth_provider_get ();
-    priv->authp_cancellable = g_cancellable_new ();
+    self->priv->authp = mm_auth_provider_get ();
+    self->priv->authp_cancellable = g_cancellable_new ();
 
     /* Setup internal lists of device objects */
-    priv->devices = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+    self->priv->devices = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
 
     /* Setup internal list of inhibited devices */
-    priv->inhibited_devices = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)inhibited_device_info_free);
-
-#if defined WITH_UDEV
-    {
-        const gchar *subsys[5] = { "tty", "net", "usb", "usbmisc", NULL };
-
-        /* Setup UDev client */
-        priv->udev = g_udev_client_new (subsys);
-    }
-#endif
+    self->priv->inhibited_devices = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)inhibited_device_info_free);
 
     /* By default, enable autoscan */
-    priv->auto_scan = TRUE;
+    self->priv->auto_scan = TRUE;
 
     /* By default, no test interface */
-    priv->enable_test = FALSE;
+    self->priv->enable_test = FALSE;
 
     /* Setup Object Manager Server */
-    priv->object_manager = g_dbus_object_manager_server_new (MM_DBUS_PATH);
+    self->priv->object_manager = g_dbus_object_manager_server_new (MM_DBUS_PATH);
 
     /* Enable processing of input DBus messages */
-    g_object_connect (manager,
+    g_object_connect (self,
                       "signal::handle-set-logging",         G_CALLBACK (handle_set_logging),         NULL,
                       "signal::handle-scan-devices",        G_CALLBACK (handle_scan_devices),        NULL,
                       "signal::handle-report-kernel-event", G_CALLBACK (handle_report_kernel_event), NULL,
@@ -1476,48 +1429,52 @@ mm_base_manager_init (MMBaseManager *manager)
 }
 
 static gboolean
-initable_init (GInitable *initable,
-               GCancellable *cancellable,
-               GError **error)
+initable_init (GInitable     *initable,
+               GCancellable  *cancellable,
+               GError       **error)
 {
-    MMBaseManagerPrivate *priv = MM_BASE_MANAGER (initable)->priv;
-
-#if defined WITH_UDEV
-    /* If autoscan enabled, list for udev events */
-    if (priv->auto_scan)
-        g_signal_connect (priv->udev, "uevent", G_CALLBACK (handle_uevent), initable);
-#endif
+    MMBaseManager *self = MM_BASE_MANAGER (initable);
 
     /* Create filter */
-    priv->filter = mm_filter_new (priv->filter_policy, error);
-    if (!priv->filter)
+    self->priv->filter = mm_filter_new (self->priv->filter_policy, error);
+    if (!self->priv->filter)
         return FALSE;
 
     /* Create plugin manager */
-    priv->plugin_manager = mm_plugin_manager_new (priv->plugin_dir, priv->filter, error);
-    if (!priv->plugin_manager)
+    self->priv->plugin_manager = mm_plugin_manager_new (self->priv->plugin_dir, self->priv->filter, error);
+    if (!self->priv->plugin_manager)
         return FALSE;
+
+#if defined WITH_UDEV
+    if (!mm_context_get_test_no_udev ()) {
+        /* Create udev client based on the subsystems requested by the plugins */
+        self->priv->udev = g_udev_client_new (mm_plugin_manager_get_subsystems (self->priv->plugin_manager));
+        /* If autoscan enabled, list for udev events */
+        if (self->priv->auto_scan)
+            g_signal_connect_swapped (self->priv->udev, "uevent", G_CALLBACK (handle_uevent), initable);
+    }
+#endif
 
     /* Export the manager interface */
     if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (initable),
-                                           priv->connection,
+                                           self->priv->connection,
                                            MM_DBUS_PATH,
                                            error))
         return FALSE;
 
     /* Export the Object Manager interface */
-    g_dbus_object_manager_server_set_connection (priv->object_manager,
-                                                 priv->connection);
+    g_dbus_object_manager_server_set_connection (self->priv->object_manager,
+                                                 self->priv->connection);
 
     /* Setup the Test skeleton and export the interface */
-    if (priv->enable_test) {
-        priv->test_skeleton = mm_gdbus_test_skeleton_new ();
-        g_signal_connect (priv->test_skeleton,
+    if (self->priv->enable_test) {
+        self->priv->test_skeleton = mm_gdbus_test_skeleton_new ();
+        g_signal_connect (self->priv->test_skeleton,
                           "handle-set-profile",
                           G_CALLBACK (handle_set_profile),
                           initable);
-        if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (priv->test_skeleton),
-                                               priv->connection,
+        if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (self->priv->test_skeleton),
+                                               self->priv->connection,
                                                MM_DBUS_PATH,
                                                error))
             return FALSE;
@@ -1530,38 +1487,38 @@ initable_init (GInitable *initable,
 static void
 finalize (GObject *object)
 {
-    MMBaseManagerPrivate *priv = MM_BASE_MANAGER (object)->priv;
+    MMBaseManager *self = MM_BASE_MANAGER (object);
 
-    g_free (priv->initial_kernel_events);
-    g_free (priv->plugin_dir);
+    g_free (self->priv->initial_kernel_events);
+    g_free (self->priv->plugin_dir);
 
-    g_hash_table_destroy (priv->inhibited_devices);
-    g_hash_table_destroy (priv->devices);
+    g_hash_table_destroy (self->priv->inhibited_devices);
+    g_hash_table_destroy (self->priv->devices);
 
 #if defined WITH_UDEV
-    if (priv->udev)
-        g_object_unref (priv->udev);
+    if (self->priv->udev)
+        g_object_unref (self->priv->udev);
 #endif
 
-    if (priv->filter)
-        g_object_unref (priv->filter);
+    if (self->priv->filter)
+        g_object_unref (self->priv->filter);
 
-    if (priv->plugin_manager)
-        g_object_unref (priv->plugin_manager);
+    if (self->priv->plugin_manager)
+        g_object_unref (self->priv->plugin_manager);
 
-    if (priv->object_manager)
-        g_object_unref (priv->object_manager);
+    if (self->priv->object_manager)
+        g_object_unref (self->priv->object_manager);
 
-    if (priv->test_skeleton)
-        g_object_unref (priv->test_skeleton);
+    if (self->priv->test_skeleton)
+        g_object_unref (self->priv->test_skeleton);
 
-    if (priv->connection)
-        g_object_unref (priv->connection);
+    if (self->priv->connection)
+        g_object_unref (self->priv->connection);
 
     /* note: authp is a singleton, we don't keep a full reference */
 
-    if (priv->authp_cancellable)
-        g_object_unref (priv->authp_cancellable);
+    if (self->priv->authp_cancellable)
+        g_object_unref (self->priv->authp_cancellable);
 
     G_OBJECT_CLASS (mm_base_manager_parent_class)->finalize (object);
 }
@@ -1570,6 +1527,12 @@ static void
 initable_iface_init (GInitableIface *iface)
 {
     iface->init = initable_init;
+}
+
+static void
+log_object_iface_init (MMLogObjectInterface *iface)
+{
+    iface->build_id = log_object_build_id;
 }
 
 static void

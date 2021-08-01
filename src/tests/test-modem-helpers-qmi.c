@@ -21,7 +21,7 @@
 
 #include "mm-enums-types.h"
 #include "mm-modem-helpers-qmi.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 static void
 test_capabilities_expected (MMQmiCapabilitiesContext *ctx,
@@ -31,7 +31,7 @@ test_capabilities_expected (MMQmiCapabilitiesContext *ctx,
     gchar *expected_str;
     gchar *built_str;
 
-    built = mm_modem_capability_from_qmi_capabilities_context (ctx);
+    built = mm_modem_capability_from_qmi_capabilities_context (ctx, NULL);
 
     expected_str = mm_modem_capability_build_string_from_mask (expected);
     built_str = mm_modem_capability_build_string_from_mask (built);
@@ -308,26 +308,6 @@ test_gobi3k_cdma (void)
 }
 
 /*****************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {

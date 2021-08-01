@@ -27,7 +27,7 @@
 #include <libmm-glib.h>
 
 #include "ModemManager.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-serial-parsers.h"
 #include "mm-modem-helpers.h"
 #include "mm-iface-modem.h"
@@ -176,7 +176,7 @@ supported_ms_classes_query_ready (MMBaseModem  *self,
     g_array_append_val (combinations, mode);
 
     /* Filter out those unsupported modes */
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 
@@ -217,7 +217,7 @@ load_current_modes_finish (MMIfaceModem  *self,
                            MMModemMode   *preferred,
                            GError       **error)
 {
-    LoadCurrentModesResult *result;
+    g_autofree LoadCurrentModesResult *result = NULL;
 
     result = g_task_propagate_pointer (G_TASK (res), error);
     if (!result)
@@ -225,7 +225,6 @@ load_current_modes_finish (MMIfaceModem  *self,
 
     *allowed   = result->allowed;
     *preferred = result->preferred;
-    g_free (result);
     return TRUE;
 }
 
@@ -234,11 +233,11 @@ wwsm_read_ready (MMBaseModem  *self,
                  GAsyncResult *res,
                  GTask        *task)
 {
-    GRegex                 *r;
-    GMatchInfo             *match_info = NULL;
-    LoadCurrentModesResult *result;
-    const gchar            *response;
-    GError                 *error = NULL;
+    g_autoptr(GRegex)                  r = NULL;
+    g_autoptr(GMatchInfo)              match_info = NULL;
+    g_autofree LoadCurrentModesResult *result = NULL;
+    const gchar                       *response;
+    GError                            *error = NULL;
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
@@ -305,19 +304,15 @@ wwsm_read_ready (MMBaseModem  *self,
         }
     }
 
-    if (result->allowed == MM_MODEM_MODE_NONE) {
+    if (result->allowed == MM_MODEM_MODE_NONE)
         g_task_return_new_error (task,
                                  MM_CORE_ERROR,
                                  MM_CORE_ERROR_FAILED,
                                  "Unknown wireless data service reply: '%s'",
                                  response);
-        g_free (result);
-    } else
-        g_task_return_pointer (task, result, g_free);
+    else
+        g_task_return_pointer (task, g_steal_pointer (&result), g_free);
     g_object_unref (task);
-
-    g_regex_unref (r);
-    g_match_info_free (match_info);
 }
 
 static void
@@ -325,9 +320,9 @@ current_ms_class_ready (MMBaseModem  *self,
                         GAsyncResult *res,
                         GTask        *task)
 {
-    LoadCurrentModesResult  result;
-    const gchar            *response;
-    GError                 *error = NULL;
+    g_autofree LoadCurrentModesResult *result = NULL;
+    const gchar                       *response;
+    GError                            *error = NULL;
 
     response = mm_base_modem_at_command_finish (self, res, &error);
     if (!response) {
@@ -341,7 +336,7 @@ current_ms_class_ready (MMBaseModem  *self,
     if (strncmp (response,
                  WAVECOM_MS_CLASS_A_IDSTR,
                  strlen (WAVECOM_MS_CLASS_A_IDSTR)) == 0) {
-        mm_dbg ("Modem configured as a Class A mobile station");
+        mm_obj_dbg (self, "configured as a Class A mobile station");
         /* For 3G devices, query WWSM status */
         mm_base_modem_at_command (self,
                                   "+WWSM?",
@@ -352,37 +347,38 @@ current_ms_class_ready (MMBaseModem  *self,
         return;
     }
 
-    result.allowed = MM_MODEM_MODE_NONE;
-    result.preferred = MM_MODEM_MODE_NONE;
+    result = g_new0 (LoadCurrentModesResult, 1);
+    result->allowed = MM_MODEM_MODE_NONE;
+    result->preferred = MM_MODEM_MODE_NONE;
 
     if (strncmp (response,
                  WAVECOM_MS_CLASS_B_IDSTR,
                  strlen (WAVECOM_MS_CLASS_B_IDSTR)) == 0) {
-        mm_dbg ("Modem configured as a Class B mobile station");
-        result.allowed = (MM_MODEM_MODE_2G | MM_MODEM_MODE_CS);
-        result.preferred = MM_MODEM_MODE_2G;
+        mm_obj_dbg (self, "configured as a Class B mobile station");
+        result->allowed = (MM_MODEM_MODE_2G | MM_MODEM_MODE_CS);
+        result->preferred = MM_MODEM_MODE_2G;
     } else if (strncmp (response,
                         WAVECOM_MS_CLASS_CG_IDSTR,
                         strlen (WAVECOM_MS_CLASS_CG_IDSTR)) == 0) {
-        mm_dbg ("Modem configured as a Class CG mobile station");
-        result.allowed = MM_MODEM_MODE_2G;
-        result.preferred = MM_MODEM_MODE_NONE;
+        mm_obj_dbg (self, "configured as a Class CG mobile station");
+        result->allowed = MM_MODEM_MODE_2G;
+        result->preferred = MM_MODEM_MODE_NONE;
     } else if (strncmp (response,
                         WAVECOM_MS_CLASS_CC_IDSTR,
                         strlen (WAVECOM_MS_CLASS_CC_IDSTR)) == 0) {
-        mm_dbg ("Modem configured as a Class CC mobile station");
-        result.allowed = MM_MODEM_MODE_CS;
-        result.preferred = MM_MODEM_MODE_NONE;
+        mm_obj_dbg (self, "configured as a Class CC mobile station");
+        result->allowed = MM_MODEM_MODE_CS;
+        result->preferred = MM_MODEM_MODE_NONE;
     }
 
-    if (result.allowed == MM_MODEM_MODE_NONE)
+    if (result->allowed == MM_MODEM_MODE_NONE)
         g_task_return_new_error (task,
                                  MM_CORE_ERROR,
                                  MM_CORE_ERROR_FAILED,
                                  "Unknown mobile station class: '%s'",
                                  response);
     else
-        g_task_return_boolean (task, TRUE);
+        g_task_return_pointer (task, g_steal_pointer (&result), g_free);
     g_object_unref (task);
 }
 
@@ -522,8 +518,8 @@ set_current_modes (MMIfaceModem        *self,
     }
 
     if (!ctx->cgclass_command) {
-        gchar *allowed_str;
-        gchar *preferred_str;
+        g_autofree gchar *allowed_str = NULL;
+        g_autofree gchar *preferred_str = NULL;
 
         allowed_str = mm_modem_mode_build_string_from_mask (allowed);
         preferred_str = mm_modem_mode_build_string_from_mask (preferred);
@@ -534,8 +530,6 @@ set_current_modes (MMIfaceModem        *self,
                                  "supported by the modem.",
                                  allowed_str, preferred_str);
         g_object_unref (task);
-        g_free (allowed_str);
-        g_free (preferred_str);
         return;
     }
 
@@ -766,11 +760,10 @@ set_bands_3g (GTask  *task,
               GArray *bands_array)
 {
     MMBroadbandModemWavecom *self;
-    GArray                  *bands_array_final;
     guint                    wavecom_band = 0;
     guint                    i;
-    gchar                   *bands_string;
-    gchar                   *cmd;
+    g_autoptr(GArray)        bands_array_final = NULL;
+    g_autofree gchar        *cmd = NULL;
 
     self = g_task_get_source_object (task);
 
@@ -797,22 +790,19 @@ set_bands_3g (GTask  *task,
         }
     }
 
-    bands_string = mm_common_build_bands_string ((MMModemBand *)bands_array_final->data,
-                                                 bands_array_final->len);
-    g_array_unref (bands_array_final);
-
     if (wavecom_band == 0) {
+        g_autofree gchar *bands_string = NULL;
+
+        bands_string = mm_common_build_bands_string ((MMModemBand *)(gpointer)bands_array_final->data, bands_array_final->len);
         g_task_return_new_error (task,
                                  MM_CORE_ERROR,
                                  MM_CORE_ERROR_UNSUPPORTED,
                                  "The given band combination is not supported: '%s'",
                                  bands_string);
         g_object_unref (task);
-        g_free (bands_string);
         return;
     }
 
-    mm_dbg ("Setting new bands to use: '%s'", bands_string);
     cmd = g_strdup_printf ("+WMBS=\"%u\",1", wavecom_band);
     mm_base_modem_at_command (MM_BASE_MODEM (self),
                               cmd,
@@ -820,8 +810,6 @@ set_bands_3g (GTask  *task,
                               FALSE,
                               (GAsyncReadyCallback)wmbs_set_ready,
                               task);
-    g_free (cmd);
-    g_free (bands_string);
 }
 
 static void
@@ -829,11 +817,10 @@ set_bands_2g (GTask  *task,
               GArray *bands_array)
 {
     MMBroadbandModemWavecom *self;
-    GArray                  *bands_array_final;
     gchar                    wavecom_band = '\0';
     guint                    i;
-    gchar                   *bands_string;
-    gchar                   *cmd;
+    g_autofree gchar        *cmd = NULL;
+    g_autoptr(GArray)        bands_array_final = NULL;
 
     self = g_task_get_source_object (task);
 
@@ -858,34 +845,31 @@ set_bands_2g (GTask  *task,
         bands_array_final = g_array_ref (bands_array);
 
     for (i = 0; wavecom_band == '\0' && i < G_N_ELEMENTS (bands_2g); i++) {
-        GArray *supported_combination;
+        g_autoptr(GArray) supported_combination = NULL;
 
         supported_combination = g_array_sized_new (FALSE, FALSE, sizeof (MMModemBand), bands_2g[i].n_mm_bands);
         g_array_append_vals (supported_combination, bands_2g[i].mm_bands, bands_2g[i].n_mm_bands);
 
         /* Check if the given array is exactly one of the supported combinations */
-        if (mm_common_bands_garray_cmp (bands_array_final, supported_combination))
+        if (mm_common_bands_garray_cmp (bands_array_final, supported_combination)) {
             wavecom_band = bands_2g[i].wavecom_band;
-
-        g_array_unref (supported_combination);
+            break;
+        }
     }
 
-    bands_string = mm_common_build_bands_string ((MMModemBand *)bands_array_final->data,
-                                                 bands_array_final->len);
-    g_array_unref (bands_array_final);
-
     if (wavecom_band == '\0') {
+        g_autofree gchar *bands_string = NULL;
+
+        bands_string = mm_common_build_bands_string ((MMModemBand *)(gpointer)bands_array_final->data, bands_array_final->len);
         g_task_return_new_error (task,
                                  MM_CORE_ERROR,
                                  MM_CORE_ERROR_UNSUPPORTED,
                                  "The given band combination is not supported: '%s'",
                                  bands_string);
         g_object_unref (task);
-        g_free (bands_string);
         return;
     }
 
-    mm_dbg ("Setting new bands to use: '%s'", bands_string);
     cmd = g_strdup_printf ("+WMBS=%c,1", wavecom_band);
     mm_base_modem_at_command (MM_BASE_MODEM (self),
                               cmd,
@@ -893,9 +877,6 @@ set_bands_2g (GTask  *task,
                               FALSE,
                               (GAsyncReadyCallback)wmbs_set_ready,
                               task);
-
-    g_free (cmd);
-    g_free (bands_string);
 }
 
 static void
@@ -1041,9 +1022,8 @@ static gboolean
 parse_network_registration_mode (const gchar *reply,
                                  guint       *mode)
 {
-    GRegex     *r;
-    GMatchInfo *match_info;
-    gboolean    parsed = FALSE;
+    g_autoptr(GRegex)     r = NULL;
+    g_autoptr(GMatchInfo) match_info = NULL;
 
     g_assert (mode != NULL);
 
@@ -1054,14 +1034,8 @@ parse_network_registration_mode (const gchar *reply,
     g_assert (r != NULL);
 
     g_regex_match (r, reply, 0, &match_info);
-    if (g_match_info_matches (match_info) &&
-        mm_get_uint_from_match_info (match_info, 1, mode))
-        parsed = TRUE;
 
-    g_match_info_free (match_info);
-    g_regex_unref (r);
-
-    return parsed;
+    return (g_match_info_matches (match_info) && mm_get_uint_from_match_info (match_info, 1, mode));
 }
 
 static void
@@ -1074,14 +1048,18 @@ cops_ready (MMBaseModem  *self,
     guint        mode;
 
     response = mm_base_modem_at_command_finish (self, res, &error);
-    if (!response)
-        goto out;
+    if (!response) {
+        g_task_return_error (task, error);
+        g_object_unref (task);
+        return;
+    }
 
     if (!parse_network_registration_mode (response, &mode)) {
-        error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
-                             "Couldn't parse current network registration mode: '%s'",
-                             response);
-        goto out;
+        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                                 "Couldn't parse current network registration mode: '%s'",
+                                 response);
+        g_object_unref (task);
+        return;
     }
 
     /* If the modem is not configured for automatic registration, run parent */
@@ -1090,13 +1068,8 @@ cops_ready (MMBaseModem  *self,
         return;
     }
 
-    mm_dbg ("Device is already in automatic registration mode, not requesting it again");
-
-out:
-    if (error)
-        g_task_return_error (task, error);
-    else
-        g_task_return_boolean (task, TRUE);
+    mm_obj_dbg (self, "device is already in automatic registration mode, not requesting it again");
+    g_task_return_boolean (task, TRUE);
     g_object_unref (task);
 }
 
@@ -1181,8 +1154,8 @@ modem_power_up (MMIfaceModem *self,
                 GAsyncReadyCallback callback,
                 gpointer user_data)
 {
-    mm_warn ("Not in full functionality status, power-up command is needed. "
-             "Note that it may reboot the modem.");
+    mm_obj_warn (self, "not in full functionality status, power-up command is needed");
+    mm_obj_warn (self, "the device maybe rebooted");
 
     /* Try to go to full functionality mode without rebooting the system.
      * Works well if we previously switched off the power with CFUN=4
@@ -1258,7 +1231,7 @@ setup_ports (MMBroadbandModem *self)
     MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_wavecom_parent_class)->setup_ports (self);
 
     /* Set 9600 baudrate by default in the AT port */
-    mm_dbg ("Baudrate will be set to 9600 bps...");
+    mm_obj_dbg (self, "baudrate will be set to 9600 bps...");
     primary = mm_base_modem_peek_port_primary (MM_BASE_MODEM (self));
     if (!primary)
         return;

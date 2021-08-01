@@ -88,7 +88,7 @@ parent_load_supported_modes_ready (MMIfaceModem *self,
     g_array_append_val (combinations, mode);
 
     /* Filter out those unsupported modes */
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 
@@ -294,7 +294,6 @@ load_access_technologies (MMIfaceModem *self,
                           GAsyncReadyCallback callback,
                           gpointer user_data)
 {
-    mm_dbg ("loading access technology (longcheer)...");
     mm_base_modem_at_command (MM_BASE_MODEM (self),
                               "+PSRAT",
                               3,
@@ -325,7 +324,6 @@ load_unlock_retries_ready (MMBaseModem *self,
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
-        mm_dbg ("Couldn't query unlock retries: '%s'", error->message);
         g_task_return_error (task, error);
         g_object_unref (task);
         return;

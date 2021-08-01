@@ -22,9 +22,10 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-huawei.h"
+#include "mm-huawei-enums-types.h"
 
 /*****************************************************************************/
 /* ^NDISSTAT /  ^NDISSTATQRY response parser */
@@ -156,13 +157,15 @@ mm_huawei_parse_ndisstatqry_response (const gchar *response,
 
 static gboolean
 match_info_to_ip4_addr (GMatchInfo *match_info,
-                        guint match_index,
-                        guint *out_addr)
+                        guint       match_index,
+                        guint      *out_addr)
 {
-    gchar *s, *bin = NULL;
-    gchar buf[9];
-    gsize len, bin_len;
-    gboolean success = FALSE;
+    g_autofree gchar  *s = NULL;
+    g_autofree guint8 *bin = NULL;
+    gchar              buf[9];
+    gsize              len;
+    gsize              bin_len;
+    guint32            aux;
 
     s = g_match_info_fetch (match_info, match_index);
     g_return_val_if_fail (s != NULL, FALSE);
@@ -170,11 +173,11 @@ match_info_to_ip4_addr (GMatchInfo *match_info,
     len = strlen (s);
     if (len == 1 && s[0] == '0') {
         *out_addr = 0;
-        success = TRUE;
-        goto done;
+        return TRUE;
     }
+
     if (len < 7 || len > 8)
-        goto done;
+        return FALSE;
 
     /* Handle possibly missing leading zero */
     memset (buf, 0, sizeof (buf));
@@ -186,17 +189,13 @@ match_info_to_ip4_addr (GMatchInfo *match_info,
     else
         g_assert_not_reached ();
 
-    bin = mm_utils_hexstr2bin (buf, &bin_len);
+    bin = mm_utils_hexstr2bin (buf, -1, &bin_len, NULL);
     if (!bin || bin_len != 4)
-        goto done;
+        return FALSE;
 
-    *out_addr = GUINT32_SWAP_LE_BE (*((guint32 *) bin));
-    success = TRUE;
-
-done:
-    g_free (s);
-    g_free (bin);
-    return success;
+    memcpy (&aux, bin, 4);
+    *out_addr = GUINT32_SWAP_LE_BE (aux);
+    return TRUE;
 }
 
 gboolean
@@ -429,8 +428,9 @@ mode_from_prefmode (guint huawei_mode,
 }
 
 GArray *
-mm_huawei_parse_prefmode_test (const gchar *response,
-                               GError **error)
+mm_huawei_parse_prefmode_test (const gchar  *response,
+                               gpointer      log_object,
+                               GError      **error)
 {
     gchar **split;
     guint i;
@@ -461,12 +461,12 @@ mm_huawei_parse_prefmode_test (const gchar *response,
             continue;
 
         if (!mm_get_uint_from_str (split[i], &val)) {
-            mm_dbg ("Error parsing ^PREFMODE value: %s", split[i]);
+            mm_obj_dbg (log_object, "error parsing ^PREFMODE value '%s'", split[i]);
             continue;
         }
 
         if (!mode_from_prefmode (val, &preferred, &inner_error)) {
-            mm_dbg ("Unhandled ^PREFMODE: %s", inner_error->message);
+            mm_obj_dbg (log_object, "unhandled ^PREFMODE value: %s", inner_error->message);
             g_error_free (inner_error);
             continue;
         }
@@ -708,9 +708,10 @@ mode_from_syscfg (guint huawei_mode,
 }
 
 static GArray *
-parse_syscfg_modes (const gchar *modes_str,
-                    const gchar *acqorder_str,
-                    GError **error)
+parse_syscfg_modes (const gchar  *modes_str,
+                    const gchar  *acqorder_str,
+                    gpointer      log_object,
+                    GError      **error)
 {
     GArray *out;
     gchar **split;
@@ -720,7 +721,7 @@ parse_syscfg_modes (const gchar *modes_str,
 
     /* Start parsing acquisition order */
     if (!sscanf (acqorder_str, "%d-%d", &min_acqorder, &max_acqorder))
-        mm_dbg ("Error parsing ^SYSCFG acquisition order range (%s)", acqorder_str);
+        mm_obj_dbg (log_object, "error parsing ^SYSCFG acquisition order range '%s'", acqorder_str);
 
     /* Just in case, we default to supporting only auto */
     if (max_acqorder < min_acqorder) {
@@ -741,13 +742,13 @@ parse_syscfg_modes (const gchar *modes_str,
         MMHuaweiSyscfgCombination combination;
 
         if (!mm_get_uint_from_str (mm_strip_quotes (split[i]), &val)) {
-            mm_dbg ("Error parsing ^SYSCFG mode value: %s", split[i]);
+            mm_obj_dbg (log_object, "error parsing ^SYSCFG mode value: %s", split[i]);
             continue;
         }
 
         if (!mode_from_syscfg (val, &allowed, &inner_error)) {
             if (inner_error) {
-                mm_dbg ("Unhandled ^SYSCFG: %s", inner_error->message);
+                mm_obj_dbg (log_object, "unhandled ^SYSCFG: %s", inner_error->message);
                 g_error_free (inner_error);
             }
             continue;
@@ -808,8 +809,9 @@ parse_syscfg_modes (const gchar *modes_str,
 }
 
 GArray *
-mm_huawei_parse_syscfg_test (const gchar *response,
-                             GError **error)
+mm_huawei_parse_syscfg_test (const gchar  *response,
+                             gpointer      log_object,
+                             GError      **error)
 {
     gchar **split;
     GError *inner_error = NULL;
@@ -846,7 +848,7 @@ mm_huawei_parse_syscfg_test (const gchar *response,
     }
 
     /* Parse supported mode combinations */
-    out = parse_syscfg_modes (split[0], split[1], &inner_error);
+    out = parse_syscfg_modes (split[0], split[1], log_object, &inner_error);
 
     g_strfreev (split);
 
@@ -1350,7 +1352,7 @@ mm_huawei_parse_hcsq_response (const gchar *response,
     gboolean ret = FALSE;
     char *s;
 
-    r = g_regex_new ("\\^HCSQ:\\s*\"([a-zA-Z]*)\",(\\d+),?(\\d+)?,?(\\d+)?,?(\\d+)?,?(\\d+)?$", 0, 0, NULL);
+    r = g_regex_new ("\\^HCSQ:\\s*\"?([a-zA-Z]*)\"?,(\\d+),?(\\d+)?,?(\\d+)?,?(\\d+)?,?(\\d+)?$", 0, 0, NULL);
     g_assert (r != NULL);
 
     if (!g_regex_match_full (r, response, -1, 0, 0, &match_info, &match_error)) {
@@ -1461,4 +1463,101 @@ mm_huawei_parse_cvoice_response (const gchar  *response,
     g_regex_unref (r);
 
     return ret;
+}
+
+/*****************************************************************************/
+/* ^GETPORTMODE response parser */
+
+#define GETPORTMODE_PREFIX "^GETPORTMODE:"
+
+GArray *
+mm_huawei_parse_getportmode_response (const gchar  *response,
+                                      gpointer      log_object,
+                                      GError      **error)
+{
+    g_autoptr(GArray) modes = NULL;
+    g_auto(GStrv)     split = NULL;
+    guint             i;
+    gint              n_items;
+
+    split = g_strsplit (response, ",", -1);
+    n_items = g_strv_length (split) - 1;
+    if (n_items < 1) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Unexpected number of items in response");
+        return NULL;
+    }
+
+    /* validate response prefix */
+    if (g_ascii_strncasecmp (split[0], GETPORTMODE_PREFIX, strlen (GETPORTMODE_PREFIX)) != 0) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Unexpected response prefix");
+        return NULL;
+    }
+
+    mm_obj_dbg (log_object, "processing ^GETPORTMODE response...");
+
+    modes = g_array_sized_new (FALSE, FALSE, sizeof (MMHuaweiPortMode), n_items);
+
+    /* iterate all port items found */
+    for (i = 1; split[i]; i++) {
+        MMHuaweiPortMode  mode = MM_HUAWEI_PORT_MODE_NONE;
+        gchar            *separator;
+        guint             port_number;
+
+        separator = strchr (split[i], ':');
+        if (!separator)
+            continue;
+
+        /* the reported port number may start either by 0 or by 1; the important
+         * thing is therefore no the number itself, only that it's a number */
+        g_strstrip (&separator[1]);
+        if (!mm_get_uint_from_str (&separator[1], &port_number)) {
+            mm_obj_warn (log_object, "  couldn't parse port number: %s", split[i]);
+            break;
+        }
+
+        *separator = '\0';
+        g_strstrip (split[i]);
+
+        if (g_ascii_strcasecmp (split[i], "pcui") == 0)
+            mode = MM_HUAWEI_PORT_MODE_PCUI;
+        else if ((g_ascii_strcasecmp (split[i], "mdm") == 0) ||
+                 (g_ascii_strcasecmp (split[i], "modem") == 0) ||
+                 (g_ascii_strcasecmp (split[i], "3g_modem") == 0))
+            mode = MM_HUAWEI_PORT_MODE_MODEM;
+        else if ((g_ascii_strcasecmp (split[i], "diag") == 0)    ||
+                 (g_ascii_strcasecmp (split[i], "3g_diag") == 0) ||
+                 (g_ascii_strcasecmp (split[i], "4g_diag") == 0))
+            mode = MM_HUAWEI_PORT_MODE_DIAG;
+        else if (g_ascii_strcasecmp (split[i], "gps") == 0)
+            mode = MM_HUAWEI_PORT_MODE_GPS;
+        else if ((g_ascii_strcasecmp (split[i], "ndis") == 0)  ||
+                 (g_ascii_strcasecmp (split[i], "rndis") == 0) ||
+                 (g_ascii_strcasecmp (split[i], "ncm") == 0)   ||
+                 (g_ascii_strcasecmp (split[i], "ecm") == 0))
+            mode = MM_HUAWEI_PORT_MODE_NET;
+        else if (g_ascii_strcasecmp (split[i], "cdrom") == 0)
+            mode = MM_HUAWEI_PORT_MODE_CDROM;
+        else if ((g_ascii_strcasecmp (split[i], "sd") == 0) ||
+                 (g_ascii_strncasecmp (split[i], "mass", 4) == 0))
+            mode = MM_HUAWEI_PORT_MODE_SD;
+        else if (g_ascii_strcasecmp (split[i], "bt") == 0)
+            mode = MM_HUAWEI_PORT_MODE_BT;
+        else if ((g_ascii_strcasecmp (split[i], "a_shell") == 0) ||
+                 (g_ascii_strcasecmp (split[i], "c_shell") == 0))
+            mode = MM_HUAWEI_PORT_MODE_SHELL;
+
+        mm_obj_dbg (log_object, "  port mode %s reported at port number %u",
+                    mm_huawei_port_mode_get_string (mode), port_number);
+        g_array_append_val (modes, mode);
+    }
+
+    if (!modes->len) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "No port modes loaded");
+        return NULL;
+    }
+
+    return g_steal_pointer (&modes);
 }

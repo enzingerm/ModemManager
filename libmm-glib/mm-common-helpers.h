@@ -126,7 +126,6 @@ MMModemCapability *mm_common_capability_combinations_variant_to_array  (GVariant
 GVariant          *mm_common_capability_combinations_array_to_variant  (const MMModemCapability *capabilities,
                                                                         guint n_capabilities);
 GVariant          *mm_common_capability_combinations_garray_to_variant (GArray *array);
-GVariant          *mm_common_build_capability_combinations_any         (void);
 GVariant          *mm_common_build_capability_combinations_none        (void);
 
 GArray                              *mm_common_oma_pending_network_initiated_sessions_variant_to_garray (GVariant *variant);
@@ -165,6 +164,12 @@ gboolean  mm_get_uint_from_match_info            (GMatchInfo  *match_info,
 gboolean  mm_get_u64_from_match_info             (GMatchInfo  *match_info,
                                                   guint32      match_index,
                                                   guint64     *out);
+gboolean  mm_get_uint_from_hex_match_info        (GMatchInfo  *match_info,
+                                                  guint32      match_index,
+                                                  guint       *out);
+gboolean  mm_get_u64_from_hex_match_info         (GMatchInfo  *match_info,
+                                                  guint32      match_index,
+                                                  guint64     *out);
 gboolean  mm_get_double_from_str                 (const gchar *str,
                                                   gdouble     *out);
 gboolean  mm_get_double_from_match_info          (GMatchInfo  *match_info,
@@ -176,7 +181,7 @@ gchar    *mm_get_string_unquoted_from_match_info (GMatchInfo  *match_info,
 const gchar *mm_sms_delivery_state_get_string_extended (guint delivery_state);
 
 gint      mm_utils_hex2byte   (const gchar *hex);
-gchar    *mm_utils_hexstr2bin (const gchar *hex, gsize *out_len);
+guint8   *mm_utils_hexstr2bin (const gchar *hex, gssize len, gsize *out_len, GError **error);
 gchar    *mm_utils_bin2hexstr (const guint8 *bin, gsize len);
 gboolean  mm_utils_ishexstr   (const gchar *hex);
 

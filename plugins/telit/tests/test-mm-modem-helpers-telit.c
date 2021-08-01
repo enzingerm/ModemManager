@@ -23,7 +23,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-test.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-telit.h"
 
@@ -170,6 +170,7 @@ test_parse_supported_bands_response (void)
                                                   supported_band_mapping_tests[i].modem_is_3g,
                                                   supported_band_mapping_tests[i].modem_is_4g,
                                                   supported_band_mapping_tests[i].modem_alternate_3g_bands,
+                                                  NULL,
                                                   &error);
         g_assert_no_error (error);
         g_assert (bands);
@@ -278,6 +279,7 @@ test_parse_current_bands_response (void)
                                                    current_band_mapping_tests[i].modem_is_3g,
                                                    current_band_mapping_tests[i].modem_is_4g,
                                                    current_band_mapping_tests[i].modem_alternate_3g_bands,
+                                                   NULL,
                                                    &error);
         g_assert_no_error (error);
         g_assert (bands);
@@ -569,26 +571,6 @@ test_telit_parse_qss_query (void)
 }
 
 /******************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {

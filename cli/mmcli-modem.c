@@ -63,6 +63,7 @@ static gchar *set_current_capabilities_str;
 static gchar *set_allowed_modes_str;
 static gchar *set_preferred_mode_str;
 static gchar *set_current_bands_str;
+static gint set_primary_sim_slot_int;
 static gboolean inhibit_flag;
 
 static GOptionEntry entries[] = {
@@ -126,6 +127,10 @@ static GOptionEntry entries[] = {
       "Set bands to be used by a given modem.",
       "[BAND1|BAND2...]"
     },
+    { "set-primary-sim-slot", 0, 0, G_OPTION_ARG_INT, &set_primary_sim_slot_int,
+      "Switch to the selected SIM slot",
+      "[SLOT NUMBER]"
+    },
     { "inhibit", 0, 0, G_OPTION_ARG_NONE, &inhibit_flag,
       "Inhibit the modem",
       NULL
@@ -140,7 +145,7 @@ mmcli_modem_get_option_group (void)
 
     /* Status options */
     group = g_option_group_new ("modem",
-                                "Modem options",
+                                "Modem options:",
                                 "Show modem options",
                                 NULL,
                                 NULL);
@@ -173,6 +178,7 @@ mmcli_modem_options_enabled (void)
                  !!set_allowed_modes_str +
                  !!set_preferred_mode_str +
                  !!set_current_bands_str +
+                 (set_primary_sim_slot_int > 0) +
                  inhibit_flag);
 
     if (n_actions == 0 && mmcli_get_common_modem_string ()) {
@@ -407,7 +413,7 @@ print_modem_info (void)
             pco_list = mm_modem_3gpp_get_pco (ctx->modem_3gpp);
             initial_eps_bearer_path = mm_modem_3gpp_get_initial_eps_bearer_path (ctx->modem_3gpp);
 
-            if (mm_modem_get_current_capabilities (ctx->modem) & (MM_MODEM_CAPABILITY_LTE | MM_MODEM_CAPABILITY_LTE_ADVANCED)) {
+            if (mm_modem_get_current_capabilities (ctx->modem) & (MM_MODEM_CAPABILITY_LTE)) {
                 MMBearerProperties *initial_eps_bearer_properties;
 
                 initial_eps_bearer_properties = mm_modem_3gpp_peek_initial_eps_bearer_settings (ctx->modem_3gpp);
@@ -475,6 +481,8 @@ print_modem_info (void)
 
     sim_path = mm_modem_get_sim_path (ctx->modem);
     mmcli_output_string (MMC_F_SIM_PATH, g_strcmp0 (sim_path, "/") != 0 ? sim_path : NULL);
+    mmcli_output_sim_slots (mm_modem_dup_sim_slot_paths (ctx->modem),
+                            mm_modem_get_primary_sim_slot (ctx->modem));
 
     bearer_paths = (const gchar **) mm_modem_get_bearer_paths (ctx->modem);
     mmcli_output_string_array (MMC_F_BEARER_PATHS, (bearer_paths && bearer_paths[0]) ? bearer_paths : NULL, TRUE);
@@ -889,6 +897,32 @@ parse_current_bands (MMModemBand **bands,
 }
 
 static void
+set_primary_sim_slot_process_reply (gboolean      result,
+                                    const GError *error)
+{
+    if (!result) {
+        g_printerr ("error: couldn't request primary SIM switch: '%s'\n",
+                    error ? error->message : "unknown error");
+        exit (EXIT_FAILURE);
+    }
+
+    g_print ("successfully requested primary SIM switch in modem\n");
+}
+
+static void
+set_primary_sim_slot_ready (MMModem      *modem,
+                            GAsyncResult *result)
+{
+    gboolean          operation_result;
+    g_autoptr(GError) error = NULL;
+
+    operation_result = mm_modem_set_primary_sim_slot_finish (modem, result, &error);
+    set_primary_sim_slot_process_reply (operation_result, error);
+
+    mmcli_async_operation_done ();
+}
+
+static void
 state_changed (MMModem                  *modem,
                MMModemState              old_state,
                MMModemState              new_state,
@@ -1127,6 +1161,16 @@ get_modem_ready (GObject      *source,
                                     (GAsyncReadyCallback)set_current_bands_ready,
                                     NULL);
         g_free (current_bands);
+        return;
+    }
+
+    /* Request to switch SIM? */
+    if (set_primary_sim_slot_int > 0) {
+        mm_modem_set_primary_sim_slot (ctx->modem,
+                                       set_primary_sim_slot_int,
+                                       ctx->cancellable,
+                                       (GAsyncReadyCallback)set_primary_sim_slot_ready,
+                                       NULL);
         return;
     }
 
@@ -1386,6 +1430,15 @@ mmcli_modem_run_synchronous (GDBusConnection *connection)
                                                   &error);
         g_free (current_bands);
         set_current_bands_process_reply (result, error);
+        return;
+    }
+
+    /* Request to switch current SIM? */
+    if (set_primary_sim_slot_int > 0) {
+        gboolean result;
+
+        result = mm_modem_set_primary_sim_slot_sync (ctx->modem, set_primary_sim_slot_int, NULL, &error);
+        set_primary_sim_slot_process_reply (result, error);
         return;
     }
 

@@ -17,7 +17,9 @@
 #ifndef MM_MODEM_HELPERS_HUAWEI_H
 #define MM_MODEM_HELPERS_HUAWEI_H
 
-#include "glib.h"
+#include <ModemManager.h>
+#define _LIBMM_INSIDE_MM
+#include <libmm-glib.h>
 
 /*****************************************************************************/
 /* ^NDISSTAT / ^NDISSTATQRY response parser */
@@ -70,8 +72,9 @@ typedef struct {
     MMModemMode preferred;
 } MMHuaweiPrefmodeCombination;
 
-GArray *mm_huawei_parse_prefmode_test (const gchar *response,
-                                       GError **error);
+GArray *mm_huawei_parse_prefmode_test (const gchar  *response,
+                                       gpointer      log_object,
+                                       GError      **error);
 
 /*****************************************************************************/
 /* ^PREFMODE response parser */
@@ -94,8 +97,9 @@ typedef struct {
     MMModemMode preferred;
 } MMHuaweiSyscfgCombination;
 
-GArray *mm_huawei_parse_syscfg_test (const gchar *response,
-                                     GError **error);
+GArray *mm_huawei_parse_syscfg_test (const gchar  *response,
+                                     gpointer      log_object,
+                                     GError      **error);
 
 /*****************************************************************************/
 /* ^SYSCFG response parser */
@@ -158,5 +162,32 @@ gboolean mm_huawei_parse_cvoice_response (const gchar  *response,
                                           guint        *hz,
                                           guint        *bits,
                                           GError      **error);
+
+/*****************************************************************************/
+/* ^GETPORTMODE response parser */
+
+typedef enum { /*< underscore_name=mm_huawei_port_mode >*/
+    MM_HUAWEI_PORT_MODE_NONE,
+    MM_HUAWEI_PORT_MODE_PCUI,
+    MM_HUAWEI_PORT_MODE_MODEM,
+    MM_HUAWEI_PORT_MODE_DIAG,
+    MM_HUAWEI_PORT_MODE_GPS,
+    MM_HUAWEI_PORT_MODE_NET,
+    MM_HUAWEI_PORT_MODE_CDROM,
+    MM_HUAWEI_PORT_MODE_SD,
+    MM_HUAWEI_PORT_MODE_BT,
+    MM_HUAWEI_PORT_MODE_SHELL,
+} MMHuaweiPortMode;
+
+#define MM_HUAWEI_PORT_MODE_IS_SERIAL(mode)  \
+    (mode == MM_HUAWEI_PORT_MODE_PCUI  ||    \
+     mode == MM_HUAWEI_PORT_MODE_MODEM ||    \
+     mode == MM_HUAWEI_PORT_MODE_DIAG  ||    \
+     mode == MM_HUAWEI_PORT_MODE_GPS   ||    \
+     mode == MM_HUAWEI_PORT_MODE_SHELL)
+
+GArray *mm_huawei_parse_getportmode_response (const gchar  *response,
+                                              gpointer      log_object,
+                                              GError      **error);
 
 #endif  /* MM_MODEM_HELPERS_HUAWEI_H */

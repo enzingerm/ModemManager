@@ -38,7 +38,8 @@
  * properties of the 3GPP interface.
  *
  * The 3GPP interface is exposed whenever a modem has any of the 3GPP
- * capabilities (%MM_MODEM_CAPABILITY_GSM_UMTS, %MM_MODEM_CAPABILITY_LTE or %MM_MODEM_CAPABILITY_LTE_ADVANCED).
+ * capabilities (%MM_MODEM_CAPABILITY_GSM_UMTS, %MM_MODEM_CAPABILITY_LTE
+ * or %MM_MODEM_CAPABILITY_5GNR).
  */
 
 G_DEFINE_TYPE (MMModem3gpp, mm_modem_3gpp, MM_GDBUS_TYPE_MODEM3GPP_PROXY)
@@ -708,7 +709,7 @@ ensure_internal_initial_eps_bearer_settings (MMModem3gpp         *self,
             /* No need to clear this signal connection when freeing self */
             self->priv->initial_eps_bearer_settings_id =
                 g_signal_connect (self,
-                                  "notify::initial-eps-bearer-properties",
+                                  "notify::initial-eps-bearer-settings",
                                   G_CALLBACK (initial_eps_bearer_settings_updated),
                                   NULL);
         }

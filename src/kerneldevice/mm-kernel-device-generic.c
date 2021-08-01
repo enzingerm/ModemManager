@@ -11,6 +11,7 @@
  * GNU General Public License for more details:
  *
  * Copyright (C) 2016 Velocloud, Inc.
+ * Copyright (C) 2020 Aleksander Morgado <aleksander@aleksander.es>
  */
 
 #define _GNU_SOURCE
@@ -25,7 +26,8 @@
 
 #include "mm-kernel-device-generic.h"
 #include "mm-kernel-device-generic-rules.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
+#include "mm-utils.h"
 
 #if !defined UDEVRULESDIR
 # error UDEVRULESDIR is not defined
@@ -52,55 +54,104 @@ struct _MMKernelDeviceGenericPrivate {
     GArray *rules;
 
     /* Contents from sysfs */
-    gchar   *driver;
+    gchar  **drivers;
+    gchar  **subsystems;
     gchar   *sysfs_path;
     gchar   *interface_sysfs_path;
     guint8   interface_class;
     guint8   interface_subclass;
     guint8   interface_protocol;
     guint8   interface_number;
+    gchar   *interface_description;
     gchar   *physdev_sysfs_path;
     guint16  physdev_vid;
     guint16  physdev_pid;
     guint16  physdev_revision;
-    gchar   *physdev_subsystem;
     gchar   *physdev_manufacturer;
     gchar   *physdev_product;
 };
 
-static guint
-read_sysfs_property_as_hex (const gchar *path,
-                            const gchar *property)
+static gboolean
+has_sysfs_attribute (const gchar *path,
+                     const gchar *attribute)
 {
-    gchar *aux;
-    gchar *contents = NULL;
-    guint val = 0;
+    g_autofree gchar *aux_filepath = NULL;
 
-    aux = g_strdup_printf ("%s/%s", path, property);
+    aux_filepath = g_strdup_printf ("%s/%s", path, attribute);
+    return g_file_test (aux_filepath, G_FILE_TEST_EXISTS);
+}
+
+static gchar *
+read_sysfs_attribute_as_string (const gchar *path,
+                                const gchar *attribute)
+{
+    g_autofree gchar *aux = NULL;
+    gchar            *contents = NULL;
+
+    aux = g_strdup_printf ("%s/%s", path, attribute);
     if (g_file_get_contents (aux, &contents, NULL, NULL)) {
         g_strdelimit (contents, "\r\n", ' ');
         g_strstrip (contents);
-        mm_get_uint_from_hex_str (contents, &val);
     }
-    g_free (contents);
-    g_free (aux);
+    return contents;
+}
+
+static guint
+read_sysfs_attribute_as_hex (const gchar *path,
+                             const gchar *attribute)
+{
+    g_autofree gchar *contents = NULL;
+    guint             val = 0;
+
+    contents = read_sysfs_attribute_as_string (path, attribute);
+    if (contents)
+        mm_get_uint_from_hex_str (contents, &val);
     return val;
 }
 
 static gchar *
-read_sysfs_property_as_string (const gchar *path,
-                               const gchar *property)
+read_sysfs_attribute_link_basename (const gchar *path,
+                                    const gchar *attribute)
 {
-    gchar *aux;
-    gchar *contents = NULL;
+    g_autofree gchar *aux_filepath = NULL;
+    g_autofree gchar *canonicalized_path = NULL;
 
-    aux = g_strdup_printf ("%s/%s", path, property);
-    if (g_file_get_contents (aux, &contents, NULL, NULL)) {
-        g_strdelimit (contents, "\r\n", ' ');
-        g_strstrip (contents);
+    aux_filepath = g_strdup_printf ("%s/%s", path, attribute);
+    if (!g_file_test (aux_filepath, G_FILE_TEST_EXISTS))
+        return NULL;
+
+    canonicalized_path = realpath (aux_filepath, NULL);
+    return g_path_get_basename (canonicalized_path);
+}
+
+static gchar *
+lookup_sysfs_attribute_as_string (MMKernelDeviceGeneric *self,
+                                  const gchar           *attribute)
+{
+    g_autofree gchar *iter = NULL;
+
+    /* if there is no parent sysfs path set, we look for the attribute
+     * only in the port sysfs path */
+    if (!self->priv->physdev_sysfs_path)
+        return read_sysfs_attribute_as_string (self->priv->sysfs_path, attribute);
+
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter) {
+        g_autofree gchar *parent = NULL;
+        gchar            *value;
+
+        /* return first one found */
+        if ((value = read_sysfs_attribute_as_string (iter, attribute)) != NULL)
+            return value;
+
+        if (g_strcmp0 (iter, self->priv->physdev_sysfs_path) == 0)
+            break;
+        parent = g_path_get_dirname (iter);
+        g_clear_pointer (&iter, g_free);
+        iter = g_steal_pointer (&parent);
     }
-    g_free (aux);
-    return contents;
+
+    return NULL;
 }
 
 /*****************************************************************************/
@@ -109,7 +160,7 @@ read_sysfs_property_as_string (const gchar *path,
 static void
 preload_sysfs_path (MMKernelDeviceGeneric *self)
 {
-    gchar *tmp;
+    g_autofree gchar *tmp = NULL;
 
     if (self->priv->sysfs_path)
         return;
@@ -125,322 +176,361 @@ preload_sysfs_path (MMKernelDeviceGeneric *self)
 
     self->priv->sysfs_path = realpath (tmp, NULL);
     if (!self->priv->sysfs_path || !g_file_test (self->priv->sysfs_path, G_FILE_TEST_EXISTS)) {
-        mm_warn ("Invalid sysfs path read for %s/%s",
-                 mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                 mm_kernel_event_properties_get_name      (self->priv->properties));
+        mm_obj_warn (self, "invalid sysfs path read for %s/%s",
+                     mm_kernel_event_properties_get_subsystem (self->priv->properties),
+                     mm_kernel_event_properties_get_name      (self->priv->properties));
         g_clear_pointer (&self->priv->sysfs_path, g_free);
     }
 
     if (self->priv->sysfs_path) {
         const gchar *devpath;
 
-        mm_dbg ("(%s/%s) sysfs path: %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->sysfs_path);
+        mm_obj_dbg (self, "sysfs path: %s", self->priv->sysfs_path);
         devpath = (g_str_has_prefix (self->priv->sysfs_path, "/sys") ?
                    &self->priv->sysfs_path[4] :
                    self->priv->sysfs_path);
         g_object_set_data_full (G_OBJECT (self), "DEVPATH", g_strdup (devpath), g_free);
     }
-    g_free (tmp);
+}
+
+/*****************************************************************************/
+
+static void
+preload_common_properties (MMKernelDeviceGeneric *self)
+{
+    if (self->priv->interface_sysfs_path) {
+        mm_obj_dbg (self, "  ID_USB_INTERFACE_NUM: 0x%02x", self->priv->interface_number);
+        g_object_set_data_full (G_OBJECT (self), "ID_USB_INTERFACE_NUM", g_strdup_printf ("%02x", self->priv->interface_number), g_free);
+    }
+
+    if (self->priv->physdev_product) {
+        mm_obj_dbg (self, "  ID_MODEL: %s", self->priv->physdev_product);
+        g_object_set_data_full (G_OBJECT (self), "ID_MODEL", g_strdup (self->priv->physdev_product), g_free);
+    }
+
+    if (self->priv->physdev_manufacturer) {
+        mm_obj_dbg (self, "  ID_VENDOR: %s", self->priv->physdev_manufacturer);
+        g_object_set_data_full (G_OBJECT (self), "ID_VENDOR", g_strdup (self->priv->physdev_manufacturer), g_free);
+    }
+
+    if (self->priv->physdev_sysfs_path) {
+        mm_obj_dbg (self, "  ID_VENDOR_ID: 0x%04x", self->priv->physdev_vid);
+        g_object_set_data_full (G_OBJECT (self), "ID_VENDOR_ID", g_strdup_printf ("%04x", self->priv->physdev_vid), g_free);
+        mm_obj_dbg (self, "  ID_MODEL_ID: 0x%04x", self->priv->physdev_pid);
+        g_object_set_data_full (G_OBJECT (self), "ID_MODEL_ID", g_strdup_printf ("%04x", self->priv->physdev_pid), g_free);
+        mm_obj_dbg (self, "  ID_REVISION: 0x%04x", self->priv->physdev_revision);
+        g_object_set_data_full (G_OBJECT (self), "ID_REVISION", g_strdup_printf ("%04x", self->priv->physdev_revision), g_free);
+    }
 }
 
 static void
-preload_interface_sysfs_path (MMKernelDeviceGeneric *self)
+ptr_array_add_sysfs_attribute_link_basename (GPtrArray    *array,
+                                             const gchar  *sysfs_path,
+                                             const gchar  *attribute,
+                                             gchar       **out_value)
 {
-    gchar *dirpath;
-    gchar *aux;
+    g_autofree gchar *value = NULL;
 
-    if (self->priv->interface_sysfs_path || !self->priv->sysfs_path)
-        return;
+    g_assert (array && sysfs_path && attribute);
+    value = read_sysfs_attribute_link_basename (sysfs_path, attribute);
+    if (value && !g_ptr_array_find_with_equal_func (array, value, g_str_equal, NULL))
+        g_ptr_array_add (array, g_steal_pointer (&value));
+    if (out_value)
+        *out_value = g_strdup (value);
+}
 
-    /* parent sysfs can be built directly using subsystem and name; e.g. for
-     * subsystem usbmisc and name cdc-wdm0:
-     *    $ realpath /sys/class/usbmisc/cdc-wdm0/device
-     *    /sys/devices/pci0000:00/0000:00:1d.0/usb4/4-1/4-1.3/4-1.3:1.8
-     *
-     * This sysfs path will be equal for all devices exported from within the
-     * same interface (e.g. a pair of cdc-wdm/wwan devices).
-     *
-     * The correct parent dir we want to have is the first one with "usb" subsystem.
-     */
-    aux = g_strdup_printf ("%s/device", self->priv->sysfs_path);
-    dirpath = realpath (aux, NULL);
-    g_free (aux);
+static void
+preload_contents_other (MMKernelDeviceGeneric *self)
+{
+    GPtrArray *drivers;
+    GPtrArray *subsystems;
 
-    while (dirpath) {
-        gchar *subsystem_filepath;
+    /* For any other kind of bus (or the absence of one, as in virtual devices),
+     * assume this is a single port device and don't try to match multiple ports
+     * together. Also, obviously, no vendor, product, revision or interface. */
 
-        /* Directory must exist */
-        if (!g_file_test (dirpath, G_FILE_TEST_EXISTS))
-            break;
+    drivers = g_ptr_array_sized_new (2);
+    ptr_array_add_sysfs_attribute_link_basename (drivers, self->priv->sysfs_path, "driver", NULL);
+    g_ptr_array_add (drivers, NULL);
+    self->priv->drivers = (gchar **) g_ptr_array_free (drivers, FALSE);
 
-        /* If subsystem file not found, keep looping */
-        subsystem_filepath = g_strdup_printf ("%s/subsystem", dirpath);
-        if (g_file_test (subsystem_filepath, G_FILE_TEST_EXISTS)) {
-            gchar *canonicalized_subsystem;
-            gchar *subsystem_name;
+    subsystems = g_ptr_array_sized_new (2);
+    ptr_array_add_sysfs_attribute_link_basename (subsystems, self->priv->sysfs_path, "subsystem", NULL);
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
+}
 
-            canonicalized_subsystem = realpath (subsystem_filepath, NULL);
-            g_free (subsystem_filepath);
+static void
+preload_contents_platform (MMKernelDeviceGeneric *self,
+                           const gchar           *platform)
+{
+    g_autofree gchar *iter = NULL;
+    GPtrArray        *drivers;
+    GPtrArray        *subsystems;
 
-            subsystem_name = g_path_get_basename (canonicalized_subsystem);
-            g_free (canonicalized_subsystem);
+    drivers = g_ptr_array_sized_new (3);
+    subsystems = g_ptr_array_sized_new (3);
 
-            if (subsystem_name && g_str_equal (subsystem_name, "usb")) {
-                self->priv->interface_sysfs_path = dirpath;
-                g_free (subsystem_name);
-                break;
-            }
-            g_free (subsystem_name);
-        } else
-            g_free (subsystem_filepath);
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter && (g_strcmp0 (iter, "/") != 0)) {
+        gchar            *parent;
+        g_autofree gchar *current_subsystem = NULL;
 
-        /* Just in case */
-        if (g_str_equal (dirpath, "/")) {
-            g_free (dirpath);
+        ptr_array_add_sysfs_attribute_link_basename (drivers,    iter, "driver",    NULL);
+        ptr_array_add_sysfs_attribute_link_basename (subsystems, iter, "subsystem", &current_subsystem);
+
+        /* Take first parent with the given platform subsystem as physical device */
+        current_subsystem = read_sysfs_attribute_link_basename (iter, "subsystem");
+        if (!self->priv->physdev_sysfs_path && (g_strcmp0 (current_subsystem, platform) == 0)) {
+            self->priv->physdev_sysfs_path = g_strdup (iter);
+            /* stop traversing as soon as the physical device is found */
             break;
         }
 
-        aux = g_path_get_dirname (dirpath);
-        g_free (dirpath);
-        dirpath = aux;
+        parent = g_path_get_dirname (iter);
+        g_clear_pointer (&iter, g_free);
+        iter = parent;
     }
 
-    if (self->priv->interface_sysfs_path)
-        mm_dbg ("(%s/%s) interface sysfs path: %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->interface_sysfs_path);
+    g_ptr_array_add (drivers, NULL);
+    self->priv->drivers = (gchar **) g_ptr_array_free (drivers, FALSE);
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
 }
 
 static void
-preload_physdev_sysfs_path (MMKernelDeviceGeneric *self)
+preload_contents_pcmcia (MMKernelDeviceGeneric *self)
 {
-    /* physdev sysfs is the dirname of the parent sysfs path, e.g.:
-     *    /sys/devices/pci0000:00/0000:00:1d.0/usb4/4-1/4-1.3
-     *
-     * This sysfs path will be equal for all devices exported from the same
-     * physical device.
-     */
-    if (!self->priv->physdev_sysfs_path && self->priv->interface_sysfs_path)
-        self->priv->physdev_sysfs_path = g_path_get_dirname (self->priv->interface_sysfs_path);
+    g_autofree gchar *iter = NULL;
+    GPtrArray        *drivers;
+    GPtrArray        *subsystems;
+    gboolean          pcmcia_subsystem_found = FALSE;
 
-    if (self->priv->physdev_sysfs_path)
-        mm_dbg ("(%s/%s) physdev sysfs path: %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_sysfs_path);
-}
+    drivers = g_ptr_array_sized_new (3);
+    subsystems = g_ptr_array_sized_new (3);
 
-static void
-preload_driver (MMKernelDeviceGeneric *self)
-{
-    if (!self->priv->driver && self->priv->interface_sysfs_path) {
-        gchar *tmp;
-        gchar *tmp2;
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter && (g_strcmp0 (iter, "/") != 0)) {
+        g_autofree gchar *parent = NULL;
+        g_autofree gchar *parent_subsystem = NULL;
+        g_autofree gchar *current_subsystem = NULL;
 
-        tmp = g_strdup_printf ("%s/driver", self->priv->interface_sysfs_path);
-        tmp2 = realpath (tmp, NULL);
-        if (tmp2 && g_file_test (tmp2, G_FILE_TEST_EXISTS))
-            self->priv->driver = g_path_get_basename (tmp2);
-        g_free (tmp2);
-        g_free (tmp);
+        ptr_array_add_sysfs_attribute_link_basename (drivers,    iter, "driver",    NULL);
+        ptr_array_add_sysfs_attribute_link_basename (subsystems, iter, "subsystem", &current_subsystem);
+
+        if (g_strcmp0 (current_subsystem, "pcmcia") == 0)
+            pcmcia_subsystem_found = TRUE;
+
+        parent = g_path_get_dirname (iter);
+        if (parent)
+            parent_subsystem = read_sysfs_attribute_link_basename (parent, "subsystem");
+
+        if (pcmcia_subsystem_found  && parent_subsystem && (g_strcmp0 (parent_subsystem, "pcmcia") != 0)) {
+            self->priv->physdev_sysfs_path = g_strdup (iter);
+            self->priv->physdev_vid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "manf_id");
+            self->priv->physdev_pid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "card_id");
+            /* stop traversing as soon as the physical device is found */
+            break;
+        }
+
+        g_clear_pointer (&iter, g_free);
+        iter = g_steal_pointer (&parent);
     }
 
-    if (self->priv->driver)
-        mm_dbg ("(%s/%s) driver: %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->driver);
+    g_ptr_array_add (drivers, NULL);
+    self->priv->drivers = (gchar **) g_ptr_array_free (drivers, FALSE);
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
 }
 
 static void
-preload_physdev_vid (MMKernelDeviceGeneric *self)
+preload_contents_pci (MMKernelDeviceGeneric *self)
 {
-    if (!self->priv->physdev_vid && self->priv->physdev_sysfs_path) {
-        guint val;
+    g_autofree gchar *iter = NULL;
+    GPtrArray        *drivers;
+    GPtrArray        *subsystems;
 
-        val = read_sysfs_property_as_hex (self->priv->physdev_sysfs_path, "idVendor");
-        if (val && val <= G_MAXUINT16)
-            self->priv->physdev_vid = val;
+    drivers = g_ptr_array_sized_new (4);
+    subsystems = g_ptr_array_sized_new (4);
+
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter && (g_strcmp0 (iter, "/") != 0)) {
+        g_autofree gchar *current_subsystem = NULL;
+        gchar            *parent;
+
+        ptr_array_add_sysfs_attribute_link_basename (drivers,    iter, "driver",    NULL);
+        ptr_array_add_sysfs_attribute_link_basename (subsystems, iter, "subsystem", &current_subsystem);
+
+        /* the PCI channel specific devices have their own drivers and
+         * subsystems, we can rely on the physical device being the first
+         * one that reports the 'pci' subsystem */
+        if (!self->priv->physdev_sysfs_path && (g_strcmp0 (current_subsystem, "pci") == 0)) {
+            self->priv->physdev_sysfs_path = g_strdup (iter);
+            self->priv->physdev_vid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "vendor");
+            self->priv->physdev_pid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "device");
+            self->priv->physdev_revision = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "revision");
+            /* stop traversing as soon as the physical device is found */
+            break;
+        }
+
+        parent = g_path_get_dirname (iter);
+        g_clear_pointer (&iter, g_free);
+        iter = parent;
     }
 
-    if (self->priv->physdev_vid) {
-        mm_dbg ("(%s/%s) vid (ID_VENDOR_ID): 0x%04x",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_vid);
-        g_object_set_data_full (G_OBJECT (self), "ID_VENDOR_ID", g_strdup_printf ("%04x", self->priv->physdev_vid), g_free);
-    } else
-        mm_dbg ("(%s/%s) vid: unknown",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties));
-
+    g_ptr_array_add (drivers, NULL);
+    self->priv->drivers = (gchar **) g_ptr_array_free (drivers, FALSE);
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
 }
 
 static void
-preload_physdev_pid (MMKernelDeviceGeneric *self)
+preload_contents_usb (MMKernelDeviceGeneric *self)
 {
-    if (!self->priv->physdev_pid && self->priv->physdev_sysfs_path) {
-        guint val;
+    g_autofree gchar *iter = NULL;
+    GPtrArray        *drivers;
+    GPtrArray        *subsystems;
 
-        val = read_sysfs_property_as_hex (self->priv->physdev_sysfs_path, "idProduct");
-        if (val && val <= G_MAXUINT16)
-            self->priv->physdev_pid = val;
+    drivers = g_ptr_array_sized_new (4);
+    subsystems = g_ptr_array_sized_new (4);
+
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter && (g_strcmp0 (iter, "/") != 0)) {
+        gchar *parent;
+
+        ptr_array_add_sysfs_attribute_link_basename (drivers,    iter, "driver",    NULL);
+        ptr_array_add_sysfs_attribute_link_basename (subsystems, iter, "subsystem", NULL);
+
+        /* is this the USB interface? */
+        if (!self->priv->interface_sysfs_path && has_sysfs_attribute (iter, "bInterfaceClass")) {
+            self->priv->interface_sysfs_path = g_strdup (iter);
+            self->priv->interface_class = read_sysfs_attribute_as_hex (self->priv->interface_sysfs_path, "bInterfaceClass");
+            self->priv->interface_subclass = read_sysfs_attribute_as_hex (self->priv->interface_sysfs_path, "bInterfaceSubClass");
+            self->priv->interface_protocol = read_sysfs_attribute_as_hex (self->priv->interface_sysfs_path, "bInterfaceProtocol");
+            self->priv->interface_number = read_sysfs_attribute_as_hex (self->priv->interface_sysfs_path, "bInterfaceNumber");
+            self->priv->interface_description = read_sysfs_attribute_as_string (self->priv->interface_sysfs_path, "interface");
+        }
+        /* is this the USB physdev? */
+        else if (!self->priv->physdev_sysfs_path && has_sysfs_attribute (iter, "idVendor")) {
+            self->priv->physdev_sysfs_path = g_strdup (iter);
+            self->priv->physdev_vid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "idVendor");
+            self->priv->physdev_pid = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "idProduct");
+            self->priv->physdev_revision = read_sysfs_attribute_as_hex (self->priv->physdev_sysfs_path, "bcdDevice");
+            self->priv->physdev_manufacturer = read_sysfs_attribute_as_string (self->priv->physdev_sysfs_path, "manufacturer");
+            self->priv->physdev_product = read_sysfs_attribute_as_string (self->priv->physdev_sysfs_path, "product");
+            /* stop traversing as soon as the physical device is found */
+            break;
+        }
+
+        parent = g_path_get_dirname (iter);
+        g_clear_pointer (&iter, g_free);
+        iter = parent;
     }
 
-    if (self->priv->physdev_pid) {
-        mm_dbg ("(%s/%s) pid (ID_MODEL_ID): 0x%04x",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_pid);
-        g_object_set_data_full (G_OBJECT (self), "ID_MODEL_ID", g_strdup_printf ("%04x", self->priv->physdev_pid), g_free);
-    } else
-        mm_dbg ("(%s/%s) pid: unknown",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties));
+    g_ptr_array_add (drivers, NULL);
+    self->priv->drivers = (gchar **) g_ptr_array_free (drivers, FALSE);
+    g_ptr_array_add (subsystems, NULL);
+    self->priv->subsystems = (gchar **) g_ptr_array_free (subsystems, FALSE);
 }
 
-static void
-preload_physdev_revision (MMKernelDeviceGeneric *self)
+static gchar *
+find_device_bus_subsystem (MMKernelDeviceGeneric *self)
 {
-    if (!self->priv->physdev_revision && self->priv->physdev_sysfs_path) {
-        guint val;
+    g_autofree gchar *iter = NULL;
 
-        val = read_sysfs_property_as_hex (self->priv->physdev_sysfs_path, "bcdDevice");
-        if (val && val <= G_MAXUINT16)
-            self->priv->physdev_revision = val;
+    iter = g_strdup (self->priv->sysfs_path);
+    while (iter && (g_strcmp0 (iter, "/") != 0)) {
+        g_autofree gchar *subsys = NULL;
+        gchar            *parent;
+
+        subsys = read_sysfs_attribute_link_basename (iter, "subsystem");
+
+        /* stop search as soon as we find a parent object
+         * of one of the supported bus subsystems */
+        if (subsys &&
+            ((g_strcmp0 (subsys, "usb") == 0)      ||
+             (g_strcmp0 (subsys, "pcmcia") == 0)   ||
+             (g_strcmp0 (subsys, "pci") == 0)      ||
+             (g_strcmp0 (subsys, "platform") == 0) ||
+             (g_strcmp0 (subsys, "pnp") == 0)      ||
+             (g_strcmp0 (subsys, "sdio") == 0)))
+            return g_steal_pointer (&subsys);
+
+        parent = g_path_get_dirname (iter);
+        g_clear_pointer (&iter, g_free);
+        iter = parent;
     }
 
-    if (self->priv->physdev_revision) {
-        mm_dbg ("(%s/%s) revision (ID_REVISION): 0x%04x",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_revision);
-        g_object_set_data_full (G_OBJECT (self), "ID_REVISION", g_strdup_printf ("%04x", self->priv->physdev_revision), g_free);
-    } else
-        mm_dbg ("(%s/%s) revision: unknown",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties));
-}
-
-static void
-preload_physdev_subsystem (MMKernelDeviceGeneric *self)
-{
-    if (!self->priv->physdev_subsystem && self->priv->physdev_sysfs_path) {
-        gchar *aux;
-        gchar *subsyspath;
-
-        aux = g_strdup_printf ("%s/subsystem", self->priv->physdev_sysfs_path);
-        subsyspath = realpath (aux, NULL);
-        self->priv->physdev_subsystem = g_path_get_dirname (subsyspath);
-        g_free (subsyspath);
-        g_free (aux);
-    }
-
-    mm_dbg ("(%s/%s) subsystem: %s",
-            mm_kernel_event_properties_get_subsystem (self->priv->properties),
-            mm_kernel_event_properties_get_name      (self->priv->properties),
-            self->priv->physdev_subsystem ? self->priv->physdev_subsystem : "unknown");
-}
-
-static void
-preload_manufacturer (MMKernelDeviceGeneric *self)
-{
-    if (!self->priv->physdev_manufacturer)
-        self->priv->physdev_manufacturer = (self->priv->physdev_sysfs_path ? read_sysfs_property_as_string (self->priv->physdev_sysfs_path, "manufacturer") : NULL);
-
-    if (self->priv->physdev_manufacturer) {
-        mm_dbg ("(%s/%s) manufacturer (ID_VENDOR): %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_manufacturer);
-        g_object_set_data_full (G_OBJECT (self), "ID_VENDOR", g_strdup (self->priv->physdev_manufacturer), g_free);
-    } else
-        mm_dbg ("(%s/%s) manufacturer: unknown",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties));
-}
-
-static void
-preload_product (MMKernelDeviceGeneric *self)
-{
-    if (!self->priv->physdev_product)
-        self->priv->physdev_product = (self->priv->physdev_sysfs_path ? read_sysfs_property_as_string (self->priv->physdev_sysfs_path, "product") : NULL);
-
-    if (self->priv->physdev_product) {
-        mm_dbg ("(%s/%s) product (ID_MODEL): %s",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->physdev_product);
-        g_object_set_data_full (G_OBJECT (self), "ID_MODEL", g_strdup (self->priv->physdev_product), g_free);
-    } else
-        mm_dbg ("(%s/%s) product: unknown",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties));
-
-}
-
-static void
-preload_interface_class (MMKernelDeviceGeneric *self)
-{
-    self->priv->interface_class = (self->priv->interface_sysfs_path ? read_sysfs_property_as_hex (self->priv->interface_sysfs_path, "bInterfaceClass") : 0x00);
-    mm_dbg ("(%s/%s) interface class: 0x%02x",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->interface_class);
-}
-
-static void
-preload_interface_subclass (MMKernelDeviceGeneric *self)
-{
-    self->priv->interface_subclass = (self->priv->interface_sysfs_path ? read_sysfs_property_as_hex (self->priv->interface_sysfs_path, "bInterfaceSubClass") : 0x00);
-    mm_dbg ("(%s/%s) interface subclass: 0x%02x",
-                mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                mm_kernel_event_properties_get_name      (self->priv->properties),
-                self->priv->interface_subclass);
-}
-
-static void
-preload_interface_protocol (MMKernelDeviceGeneric *self)
-{
-    self->priv->interface_protocol = (self->priv->interface_sysfs_path ? read_sysfs_property_as_hex (self->priv->interface_sysfs_path, "bInterfaceProtocol") : 0x00);
-    mm_dbg ("(%s/%s) interface protocol: 0x%02x",
-            mm_kernel_event_properties_get_subsystem (self->priv->properties),
-            mm_kernel_event_properties_get_name      (self->priv->properties),
-            self->priv->interface_protocol);
-}
-
-static void
-preload_interface_number (MMKernelDeviceGeneric *self)
-{
-    self->priv->interface_number = (self->priv->interface_sysfs_path ? read_sysfs_property_as_hex (self->priv->interface_sysfs_path, "bInterfaceNumber") : 0x00);
-    mm_dbg ("(%s/%s) interface number (ID_USB_INTERFACE_NUM): 0x%02x",
-            mm_kernel_event_properties_get_subsystem (self->priv->properties),
-            mm_kernel_event_properties_get_name      (self->priv->properties),
-            self->priv->interface_number);
-    g_object_set_data_full (G_OBJECT (self), "ID_USB_INTERFACE_NUM", g_strdup_printf ("%02x", self->priv->interface_number), g_free);
+    /* no more parents to check */
+    return NULL;
 }
 
 static void
 preload_contents (MMKernelDeviceGeneric *self)
 {
-    preload_sysfs_path           (self);
-    preload_interface_sysfs_path (self);
-    preload_interface_class      (self);
-    preload_interface_subclass   (self);
-    preload_interface_protocol   (self);
-    preload_interface_number     (self);
-    preload_physdev_sysfs_path   (self);
-    preload_manufacturer         (self);
-    preload_product              (self);
-    preload_driver               (self);
-    preload_physdev_vid          (self);
-    preload_physdev_pid          (self);
-    preload_physdev_revision     (self);
-    preload_physdev_subsystem    (self);
+    g_autofree gchar *bus_subsys = NULL;
+
+    if (self->priv->sysfs_path)
+        return;
+
+    preload_sysfs_path (self);
+    if (!self->priv->sysfs_path)
+        return;
+
+    bus_subsys = find_device_bus_subsystem (self);
+    if (g_strcmp0 (bus_subsys, "usb") == 0)
+        preload_contents_usb (self);
+    else if (g_strcmp0 (bus_subsys, "pcmcia") == 0)
+        preload_contents_pcmcia (self);
+    else if (g_strcmp0 (bus_subsys, "pci") == 0)
+        preload_contents_pci (self);
+    else if ((g_strcmp0 (bus_subsys, "platform") == 0) ||
+             (g_strcmp0 (bus_subsys, "pnp") == 0)      ||
+             (g_strcmp0 (bus_subsys, "sdio") == 0))
+        preload_contents_platform (self, bus_subsys);
+    else
+        preload_contents_other (self);
+
+    if (!bus_subsys)
+        return;
+
+    mm_obj_dbg (self, "port contents loaded:");
+    mm_obj_dbg (self, "  bus: %s", bus_subsys ? bus_subsys : "n/a");
+    if (self->priv->interface_sysfs_path) {
+        mm_obj_dbg (self, "  interface: %s", self->priv->interface_sysfs_path);
+        mm_obj_dbg (self, "  interface class: %02x", self->priv->interface_class);
+        mm_obj_dbg (self, "  interface subclass: %02x", self->priv->interface_subclass);
+        mm_obj_dbg (self, "  interface protocol: %02x", self->priv->interface_protocol);
+        mm_obj_dbg (self, "  interface number: %02x", self->priv->interface_number);
+    }
+    if (self->priv->interface_description)
+        mm_obj_dbg (self, "  interface description: %s", self->priv->interface_description);
+    if (self->priv->physdev_sysfs_path)
+        mm_obj_dbg (self, "  device: %s", self->priv->physdev_sysfs_path);
+    if (self->priv->subsystems) {
+        g_autofree gchar *subsystems_str = NULL;
+
+        subsystems_str = g_strjoinv (", ", self->priv->subsystems);
+        mm_obj_dbg (self, "  subsystems: %s", subsystems_str);
+    }
+    if (self->priv->drivers) {
+        g_autofree gchar *drivers_str = NULL;
+
+        drivers_str = g_strjoinv (", ", self->priv->drivers);
+        mm_obj_dbg (self, "  drivers: %s", drivers_str);
+    }
+    if (self->priv->physdev_vid)
+        mm_obj_dbg (self, "  vendor: %04x", self->priv->physdev_vid);
+    if (self->priv->physdev_pid)
+        mm_obj_dbg (self, "  product: %04x", self->priv->physdev_pid);
+    if (self->priv->physdev_revision)
+        mm_obj_dbg (self, "  revision: %04x", self->priv->physdev_revision);
+    if (self->priv->physdev_manufacturer)
+        mm_obj_dbg (self, "  manufacturer: %s", self->priv->physdev_manufacturer);
+    if (self->priv->physdev_product)
+        mm_obj_dbg (self, "  product: %s", self->priv->physdev_product);
+
+    preload_common_properties (self);
 }
 
 /*****************************************************************************/
@@ -448,65 +538,55 @@ preload_contents (MMKernelDeviceGeneric *self)
 static const gchar *
 kernel_device_get_subsystem (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
-
     return mm_kernel_event_properties_get_subsystem (MM_KERNEL_DEVICE_GENERIC (self)->priv->properties);
 }
 
 static const gchar *
 kernel_device_get_name (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
-
     return mm_kernel_event_properties_get_name (MM_KERNEL_DEVICE_GENERIC (self)->priv->properties);
 }
 
 static const gchar *
 kernel_device_get_sysfs_path (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->sysfs_path;
 }
 
 static gint
 kernel_device_get_interface_class (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), -1);
-
     return (gint) MM_KERNEL_DEVICE_GENERIC (self)->priv->interface_class;
 }
 
 static gint
 kernel_device_get_interface_subclass (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), -1);
-
     return (gint) MM_KERNEL_DEVICE_GENERIC (self)->priv->interface_subclass;
 }
 
 static gint
 kernel_device_get_interface_protocol (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), -1);
-
     return (gint) MM_KERNEL_DEVICE_GENERIC (self)->priv->interface_protocol;
 }
 
 static const gchar *
 kernel_device_get_interface_sysfs_path (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->interface_sysfs_path;
+}
+
+static const gchar *
+kernel_device_get_interface_description (MMKernelDevice *self)
+{
+    return MM_KERNEL_DEVICE_GENERIC (self)->priv->interface_description;
 }
 
 static const gchar *
 kernel_device_get_physdev_uid (MMKernelDevice *self)
 {
     const gchar *uid;
-
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
 
     /* Prefer the one coming in the properties, if any */
     if ((uid = mm_kernel_event_properties_get_uid (MM_KERNEL_DEVICE_GENERIC (self)->priv->properties)) != NULL)
@@ -525,66 +605,56 @@ kernel_device_get_physdev_uid (MMKernelDevice *self)
 }
 
 static const gchar *
-kernel_device_get_driver (MMKernelDevice *self)
+kernel_device_get_driver (MMKernelDevice *_self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
+    MMKernelDeviceGeneric *self = MM_KERNEL_DEVICE_GENERIC (_self);
 
-    return MM_KERNEL_DEVICE_GENERIC (self)->priv->driver;
+    return (self->priv->drivers ? self->priv->drivers[0] : NULL);
 }
 
 static guint16
 kernel_device_get_physdev_vid (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_vid;
 }
 
 static guint16
 kernel_device_get_physdev_pid (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_pid;
 }
 
 static guint16
 kernel_device_get_physdev_revision (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_revision;
 }
 
 static const gchar *
 kernel_device_get_physdev_sysfs_path (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_sysfs_path;
 }
 
 static const gchar *
-kernel_device_get_physdev_subsystem (MMKernelDevice *self)
+kernel_device_get_physdev_subsystem (MMKernelDevice *_self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
+    MMKernelDeviceGeneric *self = MM_KERNEL_DEVICE_GENERIC (_self);
+    guint                  len;
 
-    return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_subsystem;
+    len = (self->priv->subsystems ? g_strv_length (self->priv->subsystems) : 0);
+    return (len > 0 ? self->priv->subsystems[len - 1] : NULL);
 }
 
 static const gchar *
 kernel_device_get_physdev_manufacturer (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_manufacturer;
 }
 
 static const gchar *
 kernel_device_get_physdev_product (MMKernelDevice *self)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), 0);
-
     return MM_KERNEL_DEVICE_GENERIC (self)->priv->physdev_product;
 }
 
@@ -592,9 +662,6 @@ static gboolean
 kernel_device_cmp (MMKernelDevice *a,
                    MMKernelDevice *b)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (a), FALSE);
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (b), FALSE);
-
     return (!g_strcmp0 (mm_kernel_device_get_subsystem (a), mm_kernel_device_get_subsystem (b)) &&
             !g_strcmp0 (mm_kernel_device_get_name      (a), mm_kernel_device_get_name      (b)));
 }
@@ -602,39 +669,30 @@ kernel_device_cmp (MMKernelDevice *a,
 /*****************************************************************************/
 
 static gboolean
-string_match (const gchar *str,
-              const gchar *original_pattern)
+string_match (MMKernelDeviceGeneric *self,
+              const gchar           *str,
+              const gchar           *pattern)
 {
-    gchar    *pattern;
-    gchar    *start;
-    gboolean  open_prefix = FALSE;
-    gboolean  open_suffix = FALSE;
-    gboolean  match;
+    g_autoptr(GError)     inner_error = NULL;
+    g_autoptr(GRegex)     regex = NULL;
+    g_autoptr(GMatchInfo) match_info = NULL;
 
-    pattern = g_strdup (original_pattern);
-    start = pattern;
-
-    if (start[0] == '*') {
-        open_prefix = TRUE;
-        start++;
+    regex = g_regex_new (pattern, 0, 0, &inner_error);
+    if (!regex) {
+        mm_obj_warn (self, "invalid pattern in rule '%s': %s", pattern, inner_error->message);
+        return FALSE;
+    }
+    g_regex_match_full (regex, str, -1, 0, 0, &match_info, &inner_error);
+    if (inner_error) {
+        mm_obj_warn (self, "couldn't apply pattern match in rule '%s': %s", pattern, inner_error->message);
+        return FALSE;
     }
 
-    if (start[strlen (start) - 1] == '*') {
-        open_suffix = TRUE;
-        start[strlen (start) - 1] = '\0';
-    }
+    if (!g_match_info_matches (match_info))
+        return FALSE;
 
-    if (open_suffix && !open_prefix)
-        match = g_str_has_prefix (str, start);
-    else if (!open_suffix && open_prefix)
-        match = g_str_has_suffix (str, start);
-    else if (open_suffix && open_prefix)
-        match = !!strstr (str, start);
-    else
-        match = g_str_equal (str, start);
-
-    g_free (pattern);
-    return match;
+    mm_obj_dbg (self, "pattern '%s' matched: '%s'", pattern, str);
+    return TRUE;
 }
 
 static gboolean
@@ -649,26 +707,25 @@ check_condition (MMKernelDeviceGeneric *self,
     if (g_str_equal (match->parameter, "ACTION"))
         return ((!!strstr (match->value, "add")) == condition_equal);
 
-    /* We look for the subsystem string in the whole sysfs path.
-     *
-     * Note that we're not really making a difference between "SUBSYSTEMS"
-     * (where the whole device tree is checked) and "SUBSYSTEM" (where just one
-     * single device is checked), because a lot of the MM udev rules are meant
-     * to just tag the physical device (e.g. with ID_MM_DEVICE_IGNORE) instead
-     * of the single ports. In our case with the custom parsing, we do tag all
-     * independent ports.
-     */
-    if (g_str_equal (match->parameter, "SUBSYSTEMS") || g_str_equal (match->parameter, "SUBSYSTEM"))
-        return ((self->priv->sysfs_path && !!strstr (self->priv->sysfs_path, match->value)) == condition_equal);
+    /* Exact SUBSYSTEM match */
+    if (g_str_equal (match->parameter, "SUBSYSTEM"))
+        return ((self->priv->subsystems && !g_strcmp0 (self->priv->subsystems[0], match->value)) == condition_equal);
 
-    /* Exact DRIVER match? We also include the check for DRIVERS, even if we
-     * only apply it to this port driver. */
-    if (g_str_equal (match->parameter, "DRIVER") || g_str_equal (match->parameter, "DRIVERS"))
-        return ((!g_strcmp0 (match->value, mm_kernel_device_get_driver (MM_KERNEL_DEVICE (self)))) == condition_equal);
+    /* Loose SUBSYSTEMS match */
+    if (g_str_equal (match->parameter, "SUBSYSTEMS"))
+        return ((self->priv->subsystems && g_strv_contains ((const gchar * const *) self->priv->subsystems, match->value)) == condition_equal);
+
+    /* Exact DRIVER match */
+    if (g_str_equal (match->parameter, "DRIVER"))
+        return ((self->priv->drivers && !g_strcmp0 (self->priv->drivers[0], match->value)) == condition_equal);
+
+    /* Loose DRIVERS match */
+    if (g_str_equal (match->parameter, "DRIVERS"))
+        return ((self->priv->drivers && g_strv_contains ((const gchar * const *) self->priv->drivers, match->value)) == condition_equal);
 
     /* Device name checks */
     if (g_str_equal (match->parameter, "KERNEL"))
-        return (string_match (mm_kernel_device_get_name (MM_KERNEL_DEVICE (self)), match->value) == condition_equal);
+        return (string_match (self, mm_kernel_device_get_name (MM_KERNEL_DEVICE (self)), match->value) == condition_equal);
 
     /* Device sysfs path checks; we allow both a direct match and a prefix patch */
     if (g_str_equal (match->parameter, "DEVPATH")) {
@@ -685,22 +742,22 @@ check_condition (MMKernelDeviceGeneric *self,
         if (match->value[0] && match->value[strlen (match->value) - 1] != '*')
             prefix_match = g_strdup_printf ("%s/*", match->value);
 
-        if (string_match (self->priv->sysfs_path, match->value) == condition_equal) {
+        if (string_match (self, self->priv->sysfs_path, match->value) == condition_equal) {
             result = TRUE;
             goto out;
         }
 
-        if (prefix_match && string_match (self->priv->sysfs_path, prefix_match) == condition_equal) {
+        if (prefix_match && string_match (self, self->priv->sysfs_path, prefix_match) == condition_equal) {
             result = TRUE;
             goto out;
         }
 
         if (g_str_has_prefix (self->priv->sysfs_path, "/sys")) {
-            if (string_match (&self->priv->sysfs_path[4], match->value) == condition_equal) {
+            if (string_match (self, &self->priv->sysfs_path[4], match->value) == condition_equal) {
                 result = TRUE;
                 goto out;
             }
-            if (prefix_match && string_match (&self->priv->sysfs_path[4], prefix_match) == condition_equal) {
+            if (prefix_match && string_match (self, &self->priv->sysfs_path[4], prefix_match) == condition_equal) {
                 result = TRUE;
                 goto out;
             }
@@ -722,10 +779,10 @@ check_condition (MMKernelDeviceGeneric *self,
         g_strstrip (attribute);
 
         /* VID/PID directly from our API */
-        if (g_str_equal (attribute, "idVendor"))
+        if (g_str_equal (attribute, "idVendor") || g_str_equal (attribute, "vendor"))
             result = ((mm_get_uint_from_hex_str (match->value, &val)) &&
                       ((mm_kernel_device_get_physdev_vid (MM_KERNEL_DEVICE (self)) == val) == condition_equal));
-        else if (g_str_equal (attribute, "idProduct"))
+        else if (g_str_equal (attribute, "idProduct") || g_str_equal (attribute, "device"))
             result = ((mm_get_uint_from_hex_str (match->value, &val)) &&
                       ((mm_kernel_device_get_physdev_pid (MM_KERNEL_DEVICE (self)) == val) == condition_equal));
         /* manufacturer in the physdev */
@@ -747,8 +804,12 @@ check_condition (MMKernelDeviceGeneric *self,
         else if (g_str_equal (attribute, "bInterfaceNumber"))
             result = (g_str_equal (match->value, "?*") || ((mm_get_uint_from_hex_str (match->value, &val)) &&
                                                            ((self->priv->interface_number == val) == condition_equal)));
-        else
-            mm_warn ("Unknown attribute: %s", attribute);
+        else {
+            g_autofree gchar *found_value = NULL;
+
+            found_value = lookup_sysfs_attribute_as_string (self, attribute);
+            result = ((found_value && g_str_equal (found_value, match->value)) == condition_equal);
+        }
 
         g_free (contents);
         g_free (attribute);
@@ -770,7 +831,7 @@ check_condition (MMKernelDeviceGeneric *self,
         return result;
     }
 
-    mm_warn ("Unknown match condition parameter: %s", match->parameter);
+    mm_obj_warn (self, "unknown match condition parameter: %s", match->parameter);
     return FALSE;
 }
 
@@ -813,11 +874,9 @@ check_rule (MMKernelDeviceGeneric *self,
                 property_value_read = g_strdup_printf ("%02x", self->priv->interface_number);
 
             /* add new property */
-            mm_dbg ("(%s/%s) property added: %s=%s",
-                    mm_kernel_event_properties_get_subsystem (self->priv->properties),
-                    mm_kernel_event_properties_get_name      (self->priv->properties),
-                    rule->result.content.property.name,
-                    property_value_read ? property_value_read : rule->result.content.property.value);
+            mm_obj_dbg (self, "property added: %s=%s",
+                        rule->result.content.property.name,
+                        property_value_read ? property_value_read : rule->result.content.property.value);
 
             if (!property_value_read)
                 /* NOTE: we keep a reference to the list of rules ourselves, so it isn't
@@ -854,7 +913,7 @@ check_rule (MMKernelDeviceGeneric *self,
 }
 
 static void
-preload_properties (MMKernelDeviceGeneric *self)
+preload_rule_properties (MMKernelDeviceGeneric *self)
 {
     guint i;
 
@@ -886,19 +945,15 @@ check_preload (MMKernelDeviceGeneric *self)
     if (g_strcmp0 (mm_kernel_event_properties_get_subsystem (self->priv->properties), "virtual") == 0)
         return;
 
-    mm_dbg ("(%s/%s) preloading contents and properties...",
-            mm_kernel_event_properties_get_subsystem (self->priv->properties),
-            mm_kernel_event_properties_get_name      (self->priv->properties));
+    mm_obj_dbg (self, "preloading contents and properties...");
     preload_contents (self);
-    preload_properties (self);
+    preload_rule_properties (self);
 }
 
 static gboolean
 kernel_device_has_property (MMKernelDevice *self,
                             const gchar    *property)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), FALSE);
-
     return !!g_object_get_data (G_OBJECT (self), property);
 }
 
@@ -906,47 +961,42 @@ static const gchar *
 kernel_device_get_property (MMKernelDevice *self,
                             const gchar    *property)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), NULL);
-
     return g_object_get_data (G_OBJECT (self), property);
 }
 
+/*****************************************************************************/
+
+static gchar *
+build_attribute_data_key (const gchar *attribute)
+{
+    return g_strdup_printf ("ATTR:%s", attribute);
+}
+
 static gboolean
-kernel_device_get_property_as_boolean (MMKernelDevice *self,
-                                       const gchar    *property)
+kernel_device_has_attribute (MMKernelDevice *self,
+                             const gchar    *attribute)
 {
-    const gchar *value;
-
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), FALSE);
-
-    value = g_object_get_data (G_OBJECT (self), property);
-    return (value && mm_common_get_boolean_from_string (value, NULL));
+    return has_sysfs_attribute (MM_KERNEL_DEVICE_GENERIC (self)->priv->sysfs_path, attribute);
 }
 
-static gint
-kernel_device_get_property_as_int (MMKernelDevice *self,
-                                   const gchar    *property)
+static const gchar *
+kernel_device_get_attribute (MMKernelDevice *_self,
+                             const gchar    *attribute)
 {
-    const gchar *value;
-    gint aux = 0;
+    MMKernelDeviceGeneric *self;
+    g_autofree gchar      *key = NULL;
+    gchar                 *value = NULL;
 
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), -1);
+    self = MM_KERNEL_DEVICE_GENERIC (_self);
 
-    value = g_object_get_data (G_OBJECT (self), property);
-    return ((value && mm_get_int_from_str (value, &aux)) ? aux : 0);
-}
-
-static guint
-kernel_device_get_property_as_int_hex (MMKernelDevice *self,
-                                       const gchar    *property)
-{
-    const gchar *value;
-    guint aux = 0;
-
-    g_return_val_if_fail (MM_IS_KERNEL_DEVICE_GENERIC (self), G_MAXUINT);
-
-    value = g_object_get_data (G_OBJECT (self), property);
-    return ((value && mm_get_uint_from_hex_str (value, &aux)) ? aux : 0);
+    key = build_attribute_data_key (attribute);
+    value = g_object_get_data (G_OBJECT (self), key);
+    if (!value) {
+        value = read_sysfs_attribute_as_string (self->priv->sysfs_path, attribute);
+        if (value)
+            g_object_set_data_full (G_OBJECT (self), key, value, g_free);
+    }
+    return (const gchar *) value;
 }
 
 /*****************************************************************************/
@@ -956,8 +1006,6 @@ mm_kernel_device_generic_new_with_rules (MMKernelEventProperties  *props,
                                          GArray                   *rules,
                                          GError                  **error)
 {
-    g_return_val_if_fail (MM_IS_KERNEL_EVENT_PROPERTIES (props), NULL);
-
     /* Note: we allow NULL rules, e.g. for virtual devices */
 
     return MM_KERNEL_DEVICE (g_initable_new (MM_TYPE_KERNEL_DEVICE_GENERIC,
@@ -973,8 +1021,6 @@ mm_kernel_device_generic_new (MMKernelEventProperties  *props,
                               GError                  **error)
 {
     static GArray *rules = NULL;
-
-    g_return_val_if_fail (MM_IS_KERNEL_EVENT_PROPERTIES (props), NULL);
 
     /* We only try to load the default list of rules once */
     if (G_UNLIKELY (!rules)) {
@@ -1007,12 +1053,10 @@ set_property (GObject      *object,
     case PROP_PROPERTIES:
         g_assert (!self->priv->properties);
         self->priv->properties = g_value_dup_object (value);
-        check_preload (self);
         break;
     case PROP_RULES:
         g_assert (!self->priv->rules);
         self->priv->rules = g_value_dup_boxed (value);
-        check_preload (self);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1048,6 +1092,8 @@ initable_init (GInitable     *initable,
 {
     MMKernelDeviceGeneric *self = MM_KERNEL_DEVICE_GENERIC (initable);
     const gchar *subsystem;
+
+    check_preload (self);
 
     subsystem = mm_kernel_device_get_subsystem (MM_KERNEL_DEVICE (self));
     if (!subsystem) {
@@ -1085,13 +1131,15 @@ dispose (GObject *object)
 {
     MMKernelDeviceGeneric *self = MM_KERNEL_DEVICE_GENERIC (object);
 
-    g_clear_pointer (&self->priv->physdev_product,      g_free);
-    g_clear_pointer (&self->priv->physdev_manufacturer, g_free);
-    g_clear_pointer (&self->priv->physdev_sysfs_path,   g_free);
-    g_clear_pointer (&self->priv->interface_sysfs_path, g_free);
-    g_clear_pointer (&self->priv->sysfs_path,           g_free);
-    g_clear_pointer (&self->priv->driver,               g_free);
-    g_clear_pointer (&self->priv->rules,                g_array_unref);
+    g_clear_pointer (&self->priv->physdev_product,       g_free);
+    g_clear_pointer (&self->priv->physdev_manufacturer,  g_free);
+    g_clear_pointer (&self->priv->physdev_sysfs_path,    g_free);
+    g_clear_pointer (&self->priv->interface_description, g_free);
+    g_clear_pointer (&self->priv->interface_sysfs_path,  g_free);
+    g_clear_pointer (&self->priv->sysfs_path,            g_free);
+    g_clear_pointer (&self->priv->drivers,               g_strfreev);
+    g_clear_pointer (&self->priv->subsystems,            g_strfreev);
+    g_clear_pointer (&self->priv->rules,                 g_array_unref);
     g_clear_object  (&self->priv->properties);
 
     G_OBJECT_CLASS (mm_kernel_device_generic_parent_class)->dispose (object);
@@ -1115,35 +1163,32 @@ mm_kernel_device_generic_class_init (MMKernelDeviceGenericClass *klass)
     object_class->get_property = get_property;
     object_class->set_property = set_property;
 
-    kernel_device_class->get_subsystem            = kernel_device_get_subsystem;
-    kernel_device_class->get_name                 = kernel_device_get_name;
-    kernel_device_class->get_driver               = kernel_device_get_driver;
-    kernel_device_class->get_sysfs_path           = kernel_device_get_sysfs_path;
-    kernel_device_class->get_physdev_uid          = kernel_device_get_physdev_uid;
-    kernel_device_class->get_physdev_vid          = kernel_device_get_physdev_vid;
-    kernel_device_class->get_physdev_pid          = kernel_device_get_physdev_pid;
-    kernel_device_class->get_physdev_revision     = kernel_device_get_physdev_revision;
-    kernel_device_class->get_physdev_sysfs_path   = kernel_device_get_physdev_sysfs_path;
-    kernel_device_class->get_physdev_subsystem    = kernel_device_get_physdev_subsystem;
-    kernel_device_class->get_physdev_manufacturer = kernel_device_get_physdev_manufacturer;
-    kernel_device_class->get_physdev_product      = kernel_device_get_physdev_product;
-    kernel_device_class->get_interface_class      = kernel_device_get_interface_class;
-    kernel_device_class->get_interface_subclass   = kernel_device_get_interface_subclass;
-    kernel_device_class->get_interface_protocol   = kernel_device_get_interface_protocol;
-    kernel_device_class->get_interface_sysfs_path = kernel_device_get_interface_sysfs_path;
-    kernel_device_class->cmp                      = kernel_device_cmp;
-    kernel_device_class->has_property             = kernel_device_has_property;
-    kernel_device_class->get_property             = kernel_device_get_property;
-    kernel_device_class->get_property_as_boolean  = kernel_device_get_property_as_boolean;
-    kernel_device_class->get_property_as_int      = kernel_device_get_property_as_int;
-    kernel_device_class->get_property_as_int_hex  = kernel_device_get_property_as_int_hex;
+    kernel_device_class->get_subsystem             = kernel_device_get_subsystem;
+    kernel_device_class->get_name                  = kernel_device_get_name;
+    kernel_device_class->get_driver                = kernel_device_get_driver;
+    kernel_device_class->get_sysfs_path            = kernel_device_get_sysfs_path;
+    kernel_device_class->get_physdev_uid           = kernel_device_get_physdev_uid;
+    kernel_device_class->get_physdev_vid           = kernel_device_get_physdev_vid;
+    kernel_device_class->get_physdev_pid           = kernel_device_get_physdev_pid;
+    kernel_device_class->get_physdev_revision      = kernel_device_get_physdev_revision;
+    kernel_device_class->get_physdev_sysfs_path    = kernel_device_get_physdev_sysfs_path;
+    kernel_device_class->get_physdev_subsystem     = kernel_device_get_physdev_subsystem;
+    kernel_device_class->get_physdev_manufacturer  = kernel_device_get_physdev_manufacturer;
+    kernel_device_class->get_physdev_product       = kernel_device_get_physdev_product;
+    kernel_device_class->get_interface_class       = kernel_device_get_interface_class;
+    kernel_device_class->get_interface_subclass    = kernel_device_get_interface_subclass;
+    kernel_device_class->get_interface_protocol    = kernel_device_get_interface_protocol;
+    kernel_device_class->get_interface_sysfs_path  = kernel_device_get_interface_sysfs_path;
+    kernel_device_class->get_interface_description = kernel_device_get_interface_description;
+    kernel_device_class->cmp                       = kernel_device_cmp;
+    kernel_device_class->has_property              = kernel_device_has_property;
+    kernel_device_class->get_property              = kernel_device_get_property;
+    kernel_device_class->has_attribute             = kernel_device_has_attribute;
+    kernel_device_class->get_attribute             = kernel_device_get_attribute;
 
     /* Device-wide properties are stored per-port in the generic backend */
-    kernel_device_class->has_global_property            = kernel_device_has_property;
-    kernel_device_class->get_global_property            = kernel_device_get_property;
-    kernel_device_class->get_global_property_as_boolean = kernel_device_get_property_as_boolean;
-    kernel_device_class->get_global_property_as_int     = kernel_device_get_property_as_int;
-    kernel_device_class->get_global_property_as_int_hex = kernel_device_get_property_as_int_hex;
+    kernel_device_class->has_global_property = kernel_device_has_property;
+    kernel_device_class->get_global_property = kernel_device_get_property;
 
     properties[PROP_PROPERTIES] =
         g_param_spec_object ("properties",

@@ -54,6 +54,7 @@ typedef enum {
     MMC_S_MODEM_SIGNAL_GSM,
     MMC_S_MODEM_SIGNAL_UMTS,
     MMC_S_MODEM_SIGNAL_LTE,
+    MMC_S_MODEM_SIGNAL_5G,
     MMC_S_MODEM_OMA,
     MMC_S_MODEM_OMA_CURRENT,
     MMC_S_MODEM_OMA_PENDING,
@@ -153,6 +154,8 @@ typedef enum {
     MMC_F_CDMA_ACTIVATION,
     /* SIM section */
     MMC_F_SIM_PATH,
+    MMC_F_SIM_PRIMARY_SLOT,
+    MMC_F_SIM_SLOT_PATHS,
     /* Bearer section */
     MMC_F_BEARER_PATHS,
     /* Time section */
@@ -179,6 +182,9 @@ typedef enum {
     MMC_F_SIGNAL_LTE_RSRQ,
     MMC_F_SIGNAL_LTE_RSRP,
     MMC_F_SIGNAL_LTE_SNR,
+    MMC_F_SIGNAL_5G_RSRQ,
+    MMC_F_SIGNAL_5G_RSRP,
+    MMC_F_SIGNAL_5G_SNR,
     /* OMA section */
     MMC_F_OMA_FEATURES,
     MMC_F_OMA_CURRENT_TYPE,
@@ -224,6 +230,7 @@ typedef enum {
     MMC_F_BEARER_PROPERTIES_APN,
     MMC_F_BEARER_PROPERTIES_ROAMING,
     MMC_F_BEARER_PROPERTIES_IP_TYPE,
+    MMC_F_BEARER_PROPERTIES_ALLOWED_AUTH,
     MMC_F_BEARER_PROPERTIES_USER,
     MMC_F_BEARER_PROPERTIES_PASSWORD,
     MMC_F_BEARER_PROPERTIES_NUMBER,
@@ -243,6 +250,11 @@ typedef enum {
     MMC_F_BEARER_STATS_DURATION,
     MMC_F_BEARER_STATS_BYTES_RX,
     MMC_F_BEARER_STATS_BYTES_TX,
+    MMC_F_BEARER_STATS_ATTEMPTS,
+    MMC_F_BEARER_STATS_FAILED_ATTEMPTS,
+    MMC_F_BEARER_STATS_TOTAL_DURATION,
+    MMC_F_BEARER_STATS_TOTAL_BYTES_RX,
+    MMC_F_BEARER_STATS_TOTAL_BYTES_TX,
     MMC_F_CALL_GENERAL_DBUS_PATH,
     MMC_F_CALL_PROPERTIES_NUMBER,
     MMC_F_CALL_PROPERTIES_DIRECTION,
@@ -271,8 +283,10 @@ typedef enum {
     MMC_F_SMS_PROPERTIES_DELIVERY_STATE,
     MMC_F_SMS_PROPERTIES_DISCH_TIMESTAMP,
     MMC_F_SIM_GENERAL_DBUS_PATH,
+    MMC_F_SIM_PROPERTIES_ACTIVE,
     MMC_F_SIM_PROPERTIES_IMSI,
     MMC_F_SIM_PROPERTIES_ICCID,
+    MMC_F_SIM_PROPERTIES_EID,
     MMC_F_SIM_PROPERTIES_OPERATOR_ID,
     MMC_F_SIM_PROPERTIES_OPERATOR_NAME,
     MMC_F_SIM_PROPERTIES_EMERGENCY_NUMBERS,
@@ -327,14 +341,16 @@ void mmcli_output_listitem              (MmcF           field,
 /******************************************************************************/
 /* Custom output management */
 
-void mmcli_output_signal_quality   (guint                     value,
-                                    gboolean                  recent);
-void mmcli_output_state            (MMModemState              state,
-                                    MMModemStateFailedReason  reason);
-void mmcli_output_scan_networks    (GList                    *network_list);
-void mmcli_output_firmware_list    (GList                    *firmware_list,
-                                    MMFirmwareProperties     *selected);
-void mmcli_output_pco_list         (GList                    *pco_list);
+void mmcli_output_signal_quality   (guint                      value,
+                                    gboolean                   recent);
+void mmcli_output_state            (MMModemState               state,
+                                    MMModemStateFailedReason   reason);
+void mmcli_output_sim_slots        (gchar                    **sim_slot_paths,
+                                    guint                      primary_sim_slot);
+void mmcli_output_scan_networks    (GList                     *network_list);
+void mmcli_output_firmware_list    (GList                     *firmware_list,
+                                    MMFirmwareProperties      *selected);
+void mmcli_output_pco_list         (GList                     *pco_list);
 
 /******************************************************************************/
 /* Dump output */

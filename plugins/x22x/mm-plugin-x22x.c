@@ -21,7 +21,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-plugin-x22x.h"
 #include "mm-broadband-modem-x22x.h"
@@ -62,12 +62,15 @@ static void x22x_custom_init_step (GTask *task);
 
 static void
 gmr_ready (MMPortSerialAt *port,
-           GAsyncResult *res,
-           GTask *task)
+           GAsyncResult   *res,
+           GTask          *task)
 {
+    MMPortProbe *probe;
     const gchar *p;
     const gchar *response;
-    GError *error = NULL;
+    GError      *error = NULL;
+
+    probe = g_task_get_source_object (task);
 
     response = mm_port_serial_at_command_finish (port, res, &error);
     if (error) {
@@ -90,7 +93,7 @@ gmr_ready (MMPortSerialAt *port,
                                  MM_CORE_ERROR_UNSUPPORTED,
                                  "Not supported with the X22X plugin");
     } else {
-        mm_dbg ("(X22X) device is supported by this plugin");
+        mm_obj_dbg (probe, "(X22X) device is supported by this plugin");
         g_task_return_boolean (task, TRUE);
     }
     g_object_unref (task);
@@ -99,16 +102,17 @@ gmr_ready (MMPortSerialAt *port,
 static void
 x22x_custom_init_step (GTask *task)
 {
+    MMPortProbe           *probe;
     X22xCustomInitContext *ctx;
-    GCancellable *cancellable;
+    GCancellable          *cancellable;
 
-    ctx = g_task_get_task_data (task);
+    probe       = g_task_get_source_object (task);
+    ctx         = g_task_get_task_data (task);
     cancellable = g_task_get_cancellable (task);
 
     /* If cancelled, end */
     if (g_cancellable_is_cancelled (cancellable)) {
-        mm_dbg ("(X22X) no need to keep on running custom init in (%s)",
-                mm_port_get_device (MM_PORT (ctx->port)));
+        mm_obj_dbg (probe, "(X22X) no need to keep on running custom init");
         g_task_return_boolean (task, TRUE);
         g_object_unref (task);
         return;
@@ -190,7 +194,7 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered X22X modem found...");
+        mm_obj_dbg (self, "QMI-powered X22X modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_new (uid,
                                                           drivers,
                                                           mm_plugin_get_name (self),
@@ -211,7 +215,7 @@ create_modem (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     /* Vendors: TAMobile and Olivetti */
     static const guint16 vendor_ids[] = { 0x1bbb, 0x0b3c, 0 };
     /* Only handle X22X tagged devices here. */
@@ -226,7 +230,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_X22X,
-                      MM_PLUGIN_NAME,               "X22X",
+                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_VENDOR_IDS, vendor_ids,
                       MM_PLUGIN_ALLOWED_AT,         TRUE,

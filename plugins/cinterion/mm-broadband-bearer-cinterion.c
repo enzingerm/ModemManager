@@ -24,7 +24,7 @@
 #include <ModemManager.h>
 #include "mm-base-modem-at.h"
 #include "mm-broadband-bearer-cinterion.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-cinterion.h"
 #include "mm-daemon-enums-types.h"
@@ -101,11 +101,13 @@ swwan_check_status_ready (MMBaseModem  *modem,
                           GAsyncResult *res,
                           GTask        *task)
 {
-    const gchar              *response;
-    GError                   *error = NULL;
-    MMBearerConnectionStatus  status;
-    guint                     cid;
+    MMBroadbandBearerCinterion *self;
+    const gchar                *response;
+    GError                     *error = NULL;
+    MMBearerConnectionStatus    status;
+    guint                       cid;
 
+    self = g_task_get_source_object (task);
     cid = GPOINTER_TO_UINT (g_task_get_task_data (task));
 
     response = mm_base_modem_at_command_finish (modem, res, &error);
@@ -114,7 +116,7 @@ swwan_check_status_ready (MMBaseModem  *modem,
         goto out;
     }
 
-    status = mm_cinterion_parse_swwan_response (response, cid, &error);
+    status = mm_cinterion_parse_swwan_response (response, cid, self, &error);
     if (status == MM_BEARER_CONNECTION_STATUS_UNKNOWN) {
         g_task_return_error (task, error);
         goto out;
@@ -162,78 +164,6 @@ load_connection_status (MMBaseBearer        *bearer,
                                    mm_broadband_bearer_get_3gpp_cid (MM_BROADBAND_BEARER (bearer)),
                                    callback,
                                    user_data);
-}
-
-/*****************************************************************************/
-/* Auth helpers */
-
-typedef enum {
-    BEARER_CINTERION_AUTH_UNKNOWN   = -1,
-    BEARER_CINTERION_AUTH_NONE      =  0,
-    BEARER_CINTERION_AUTH_PAP       =  1,
-    BEARER_CINTERION_AUTH_CHAP      =  2,
-    BEARER_CINTERION_AUTH_MSCHAPV2  =  3,
-} BearerCinterionAuthType;
-
-static BearerCinterionAuthType
-parse_auth_type (MMBearerAllowedAuth mm_auth)
-{
-    switch (mm_auth) {
-    case MM_BEARER_ALLOWED_AUTH_NONE:
-        return BEARER_CINTERION_AUTH_NONE;
-    case MM_BEARER_ALLOWED_AUTH_PAP:
-        return BEARER_CINTERION_AUTH_PAP;
-    case MM_BEARER_ALLOWED_AUTH_CHAP:
-        return BEARER_CINTERION_AUTH_CHAP;
-    case MM_BEARER_ALLOWED_AUTH_MSCHAPV2:
-        return BEARER_CINTERION_AUTH_MSCHAPV2;
-    case MM_BEARER_ALLOWED_AUTH_UNKNOWN:
-    case MM_BEARER_ALLOWED_AUTH_MSCHAP:
-    case MM_BEARER_ALLOWED_AUTH_EAP:
-    default:
-        return BEARER_CINTERION_AUTH_UNKNOWN;
-    }
-}
-
-/* AT^SGAUTH=<cid>[, <auth_type>[, <passwd>, <user>]] */
-static gchar *
-build_auth_string (MMBearerProperties *config,
-                   guint               cid)
-{
-    const gchar             *user;
-    const gchar             *passwd;
-    gboolean                 has_user;
-    gboolean                 has_passwd;
-    MMBearerAllowedAuth      auth;
-    BearerCinterionAuthType  encoded_auth = BEARER_CINTERION_AUTH_UNKNOWN;
-
-    user   = mm_bearer_properties_get_user         (config);
-    passwd = mm_bearer_properties_get_password     (config);
-    auth   = mm_bearer_properties_get_allowed_auth (config);
-
-    has_user     = (user   && user[0]);
-    has_passwd   = (passwd && passwd[0]);
-    encoded_auth = parse_auth_type (auth);
-
-    /* When 'none' requested, we won't require user/password */
-    if (encoded_auth == BEARER_CINTERION_AUTH_NONE) {
-        if (has_user || has_passwd)
-            mm_warn ("APN user/password given but 'none' authentication requested");
-        return g_strdup_printf ("^SGAUTH=%u,%d", cid, encoded_auth);
-    }
-
-    /* No explicit auth type requested? */
-    if (encoded_auth == BEARER_CINTERION_AUTH_UNKNOWN) {
-        /* If no user/passwd given, do nothing */
-        if (!has_user && !has_passwd)
-            return NULL;
-
-        /* If user/passwd given, default to PAP */
-        mm_dbg ("APN user/password given but no authentication type explicitly requested: defaulting to 'PAP'");
-        encoded_auth = BEARER_CINTERION_AUTH_PAP;
-    }
-
-    return g_strdup_printf ("^SGAUTH=%u,%d,%s,%s", cid, encoded_auth, passwd, user);
 }
 
 /******************************************************************************/
@@ -356,9 +286,11 @@ handle_cancel_dial (GTask *task)
 static void
 dial_3gpp_context_step (GTask *task)
 {
-    Dial3gppContext *ctx;
+    MMBroadbandBearerCinterion *self;
+    Dial3gppContext            *ctx;
 
-    ctx = (Dial3gppContext *) g_task_get_task_data (task);
+    self = g_task_get_source_object (task);
+    ctx  = g_task_get_task_data (task);
 
     /* Check for cancellation */
     if (g_task_return_error_if_cancelled (task)) {
@@ -371,22 +303,14 @@ dial_3gpp_context_step (GTask *task)
     case DIAL_3GPP_CONTEXT_STEP_FIRST: {
         MMBearerIpFamily ip_family;
 
-        /* Only IPv4 supported by this bearer implementation for now */
         ip_family = mm_bearer_properties_get_ip_type (mm_base_bearer_peek_config (MM_BASE_BEARER (ctx->self)));
         if (ip_family == MM_BEARER_IP_FAMILY_NONE || ip_family == MM_BEARER_IP_FAMILY_ANY) {
             gchar *ip_family_str;
 
             ip_family = mm_base_bearer_get_default_ip_family (MM_BASE_BEARER (ctx->self));
             ip_family_str = mm_bearer_ip_family_build_string_from_mask (ip_family);
-            mm_dbg ("No specific IP family requested, defaulting to %s", ip_family_str);
+            mm_obj_dbg (self, "no specific IP family requested, defaulting to %s", ip_family_str);
             g_free (ip_family_str);
-        }
-
-        if (ip_family != MM_BEARER_IP_FAMILY_IPV4) {
-            g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
-                                     "Only IPv4 is supported by this modem");
-            g_object_unref (task);
-            return;
         }
 
         ctx->step++;
@@ -395,9 +319,13 @@ dial_3gpp_context_step (GTask *task)
     case DIAL_3GPP_CONTEXT_STEP_AUTH: {
         gchar *command;
 
-        command = build_auth_string (mm_base_bearer_peek_config (MM_BASE_BEARER (ctx->self)), ctx->cid);
+        command = mm_cinterion_build_auth_string (self,
+                                                  mm_broadband_modem_cinterion_get_family (MM_BROADBAND_MODEM_CINTERION (ctx->modem)),
+                                                  mm_base_bearer_peek_config (MM_BASE_BEARER (ctx->self)),
+                                                  ctx->cid);
+
         if (command) {
-            mm_dbg ("cinterion dial step %u/%u: authenticating...", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
+            mm_obj_dbg (self, "dial step %u/%u: authenticating...", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
             /* Send SGAUTH write, if User & Pass are provided.
              * advance to next state by callback */
             mm_base_modem_at_command_full (ctx->modem,
@@ -413,22 +341,22 @@ dial_3gpp_context_step (GTask *task)
             return;
         }
 
-        mm_dbg ("cinterion dial step %u/%u: authentication not required", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
+        mm_obj_dbg (self, "dial step %u/%u: authentication not required", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
         ctx->step++;
     } /* fall through */
 
     case DIAL_3GPP_CONTEXT_STEP_START_SWWAN: {
         gchar *command;
 
-        mm_dbg ("cinterion dial step %u/%u: starting SWWAN interface %u connection...",
-                ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST, usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
+        mm_obj_dbg (self, "dial step %u/%u: starting SWWAN interface %u connection...",
+                    ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST, usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
         command = g_strdup_printf ("^SWWAN=1,%u,%u",
                                    ctx->cid,
                                    usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
         mm_base_modem_at_command_full (ctx->modem,
                                        ctx->primary,
                                        command,
-                                       90,
+                                       MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
                                        FALSE,
                                        FALSE,
                                        NULL,
@@ -439,8 +367,8 @@ dial_3gpp_context_step (GTask *task)
     }
 
     case DIAL_3GPP_CONTEXT_STEP_VALIDATE_CONNECTION:
-        mm_dbg ("cinterion dial step %u/%u: checking SWWAN interface %u status...",
-                ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST, usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
+        mm_obj_dbg (self, "dial step %u/%u: checking SWWAN interface %u status...",
+                    ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST, usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
         load_connection_status_by_cid (ctx->self,
                                        ctx->cid,
                                        (GAsyncReadyCallback) dial_connection_status_ready,
@@ -448,7 +376,7 @@ dial_3gpp_context_step (GTask *task)
         return;
 
     case DIAL_3GPP_CONTEXT_STEP_LAST:
-        mm_dbg ("cinterion dial step %u/%u: finished", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
+        mm_obj_dbg (self, "dial step %u/%u: finished", ctx->step, DIAL_3GPP_CONTEXT_STEP_LAST);
         g_task_return_pointer (task, g_object_ref (ctx->data), g_object_unref);
         g_object_unref (task);
         return;
@@ -562,7 +490,7 @@ disconnect_connection_status_ready (MMBroadbandBearerCinterion *self,
     switch (status) {
     case MM_BEARER_CONNECTION_STATUS_UNKNOWN:
         /* Assume disconnected */
-        mm_dbg ("couldn't get CID %u status, assume disconnected: %s", ctx->cid, error->message);
+        mm_obj_dbg (self, "couldn't get CID %u status, assume disconnected: %s", ctx->cid, error->message);
         g_clear_error (&error);
         break;
     case MM_BEARER_CONNECTION_STATUS_DISCONNECTED:
@@ -604,9 +532,11 @@ swwan_disconnect_ready (MMBaseModem  *modem,
 static void
 disconnect_3gpp_context_step (GTask *task)
 {
-    Disconnect3gppContext *ctx;
+    MMBroadbandBearerCinterion *self;
+    Disconnect3gppContext      *ctx;
 
-    ctx = (Disconnect3gppContext *) g_task_get_task_data (task);
+    self = g_task_get_source_object (task);
+    ctx  = g_task_get_task_data (task);
 
     switch (ctx->step) {
     case DISCONNECT_3GPP_CONTEXT_STEP_FIRST:
@@ -618,12 +548,12 @@ disconnect_3gpp_context_step (GTask *task)
 
         command = g_strdup_printf ("^SWWAN=0,%u,%u",
                                    ctx->cid, usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
-        mm_dbg ("cinterion disconnect step %u/%u: disconnecting PDP CID %u...",
-                ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST, ctx->cid);
+        mm_obj_dbg (self, "disconnect step %u/%u: disconnecting PDP CID %u...",
+                    ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST, ctx->cid);
         mm_base_modem_at_command_full (ctx->modem,
                                        ctx->primary,
                                        command,
-                                       10,
+                                       MM_BASE_BEARER_DEFAULT_DISCONNECTION_TIMEOUT,
                                        FALSE,
                                        FALSE,
                                        NULL,
@@ -634,9 +564,9 @@ disconnect_3gpp_context_step (GTask *task)
     }
 
     case DISCONNECT_3GPP_CONTEXT_STEP_CONNECTION_STATUS:
-        mm_dbg ("cinterion disconnect step %u/%u: checking SWWAN interface %u status...",
-                ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST,
-                usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
+        mm_obj_dbg (self, "disconnect step %u/%u: checking SWWAN interface %u status...",
+                    ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST,
+                    usb_interface_configs[ctx->usb_interface_config_index].swwan_index);
         load_connection_status_by_cid (MM_BROADBAND_BEARER_CINTERION (ctx->self),
                                        ctx->cid,
                                        (GAsyncReadyCallback) disconnect_connection_status_ready,
@@ -644,8 +574,8 @@ disconnect_3gpp_context_step (GTask *task)
          return;
 
     case DISCONNECT_3GPP_CONTEXT_STEP_LAST:
-        mm_dbg ("cinterion disconnect step %u/%u: finished",
-                ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST);
+        mm_obj_dbg (self, "disconnect step %u/%u: finished",
+                    ctx->step, DISCONNECT_3GPP_CONTEXT_STEP_LAST);
         g_task_return_boolean (task, TRUE);
         g_object_unref (task);
         return;

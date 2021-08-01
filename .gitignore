@@ -117,6 +117,7 @@ Makefile.in
 /docs/reference/libmm-glib/libmm-glib.interfaces
 /docs/reference/libmm-glib/libmm-glib.prerequisites
 /docs/reference/libmm-glib/libmm-glib.signals
+/docs/reference/libmm-glib/libmm-glib.actions
 /docs/reference/libmm-glib/libmm-glib.types
 /docs/reference/libmm-glib/*.stamp
 /docs/reference/libmm-glib/*.txt
@@ -167,8 +168,8 @@ Makefile.in
 /plugins/test-service-*
 
 /plugins/ublox/mm-ublox-enums-types.[ch]
-
 /plugins/telit/mm-telit-enums-types.[ch]
+/plugins/huawei/mm-huawei-enums-types.[ch]
 
 /plugins/xmm7360/mm-xmm7360-rpc-enums-types.[ch]
 
@@ -177,6 +178,10 @@ Makefile.in
 /test/mmrules
 /test/mmsmspdu
 /test/mmsmsmonitor
+
+/tools/tests/services/org.freedesktop.ModemManager1.service
+/tools/tests/test-stub
+/tools/tests/test-wrapper.sh
 
 /ModemManager-*-coverage.info
 /ModemManager-*-coverage/

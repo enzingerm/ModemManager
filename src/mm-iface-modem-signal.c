@@ -19,7 +19,7 @@
 
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-signal.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 #define SUPPORT_CHECKED_TAG "signal-support-checked-tag"
 #define SUPPORTED_TAG       "signal-supported-tag"
@@ -55,7 +55,7 @@ refresh_context_free (RefreshContext *ctx)
 static void
 clear_values (MMIfaceModemSignal *self)
 {
-    MmGdbusModemSignal *skeleton;
+    g_autoptr(MmGdbusModemSignalSkeleton) skeleton = NULL;
 
     g_object_get (self,
                   MM_IFACE_MODEM_SIGNAL_DBUS_SKELETON, &skeleton,
@@ -63,26 +63,32 @@ clear_values (MMIfaceModemSignal *self)
     if (!skeleton)
         return;
 
-    mm_gdbus_modem_signal_set_cdma (skeleton, NULL);
-    mm_gdbus_modem_signal_set_evdo (skeleton, NULL);
-    mm_gdbus_modem_signal_set_gsm  (skeleton, NULL);
-    mm_gdbus_modem_signal_set_umts (skeleton, NULL);
-    mm_gdbus_modem_signal_set_lte  (skeleton, NULL);
-    g_object_unref (skeleton);
+    mm_gdbus_modem_signal_set_cdma (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
+    mm_gdbus_modem_signal_set_evdo (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
+    mm_gdbus_modem_signal_set_gsm  (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
+    mm_gdbus_modem_signal_set_umts (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
+    mm_gdbus_modem_signal_set_lte  (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
+    mm_gdbus_modem_signal_set_nr5g (MM_GDBUS_MODEM_SIGNAL (skeleton), NULL);
 }
 
 static void
 load_values_ready (MMIfaceModemSignal *self,
-                   GAsyncResult *res)
+                   GAsyncResult       *res)
 {
-    GVariant *dictionary;
-    GError *error = NULL;
-    MMSignal *cdma = NULL;
-    MMSignal *evdo = NULL;
-    MMSignal *gsm = NULL;
-    MMSignal *umts = NULL;
-    MMSignal *lte = NULL;
-    MmGdbusModemSignal *skeleton;
+    g_autoptr(GError)   error = NULL;
+    g_autoptr(MMSignal) cdma = NULL;
+    g_autoptr(GVariant) dict_cdma = NULL;
+    g_autoptr(MMSignal) evdo = NULL;
+    g_autoptr(GVariant) dict_evdo = NULL;
+    g_autoptr(MMSignal) gsm = NULL;
+    g_autoptr(GVariant) dict_gsm = NULL;
+    g_autoptr(MMSignal) umts = NULL;
+    g_autoptr(GVariant) dict_umts = NULL;
+    g_autoptr(MMSignal) lte = NULL;
+    g_autoptr(GVariant) dict_lte = NULL;
+    g_autoptr(MMSignal) nr5g = NULL;
+    g_autoptr(GVariant) dict_nr5g = NULL;
+    g_autoptr(MmGdbusModemSignalSkeleton) skeleton = NULL;
 
     if (!MM_IFACE_MODEM_SIGNAL_GET_INTERFACE (self)->load_values_finish (
             self,
@@ -92,9 +98,9 @@ load_values_ready (MMIfaceModemSignal *self,
             &gsm,
             &umts,
             &lte,
+            &nr5g,
             &error)) {
-        mm_warn ("Couldn't load extended signal information: %s", error->message);
-        g_error_free (error);
+        mm_obj_warn (self, "couldn't load extended signal information: %s", error->message);
         clear_values (self);
         return;
     }
@@ -103,55 +109,36 @@ load_values_ready (MMIfaceModemSignal *self,
                   MM_IFACE_MODEM_SIGNAL_DBUS_SKELETON, &skeleton,
                   NULL);
     if (!skeleton) {
-        mm_warn ("Cannot update extended signal information: "
-                 "Couldn't get interface skeleton");
+        mm_obj_warn (self, "cannot update extended signal information: couldn't get interface skeleton");
         return;
     }
 
-    if (cdma) {
-        dictionary = mm_signal_get_dictionary (cdma);
-        mm_gdbus_modem_signal_set_cdma (skeleton, dictionary);
-        g_variant_unref (dictionary);
-        g_object_unref (cdma);
-    } else
-        mm_gdbus_modem_signal_set_cdma (skeleton, NULL);
+    if (cdma)
+        dict_cdma = mm_signal_get_dictionary (cdma);
+    mm_gdbus_modem_signal_set_cdma (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_cdma);
 
-    if (evdo) {
-        dictionary = mm_signal_get_dictionary (evdo);
-        mm_gdbus_modem_signal_set_evdo (skeleton, dictionary);
-        g_variant_unref (dictionary);
-        g_object_unref (evdo);
-    } else
-        mm_gdbus_modem_signal_set_evdo (skeleton, NULL);
+    if (evdo)
+        dict_evdo = mm_signal_get_dictionary (evdo);
+    mm_gdbus_modem_signal_set_evdo (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_evdo);
 
-    if (gsm) {
-        dictionary = mm_signal_get_dictionary (gsm);
-        mm_gdbus_modem_signal_set_gsm (skeleton, dictionary);
-        g_variant_unref (dictionary);
-        g_object_unref (gsm);
-    } else
-        mm_gdbus_modem_signal_set_gsm (skeleton, NULL);
+    if (gsm)
+        dict_gsm = mm_signal_get_dictionary (gsm);
+    mm_gdbus_modem_signal_set_gsm (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_gsm);
 
-    if (umts) {
-        dictionary = mm_signal_get_dictionary (umts);
-        mm_gdbus_modem_signal_set_umts (skeleton, dictionary);
-        g_variant_unref (dictionary);
-        g_object_unref (umts);
-    } else
-        mm_gdbus_modem_signal_set_umts (skeleton, NULL);
+    if (umts)
+        dict_umts = mm_signal_get_dictionary (umts);
+    mm_gdbus_modem_signal_set_umts (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_umts);
 
-    if (lte) {
-        dictionary = mm_signal_get_dictionary (lte);
-        mm_gdbus_modem_signal_set_lte (skeleton, dictionary);
-        g_variant_unref (dictionary);
-        g_object_unref (lte);
-    } else
-        mm_gdbus_modem_signal_set_lte (skeleton, NULL);
+    if (lte)
+        dict_lte = mm_signal_get_dictionary (lte);
+    mm_gdbus_modem_signal_set_lte (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_lte);
+
+    if (nr5g)
+        dict_nr5g = mm_signal_get_dictionary (nr5g);
+    mm_gdbus_modem_signal_set_nr5g (MM_GDBUS_MODEM_SIGNAL (skeleton), dict_nr5g);
 
     /* Flush right away */
     g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (skeleton));
-
-    g_object_unref (skeleton);
 }
 
 static gboolean
@@ -172,7 +159,7 @@ teardown_refresh_context (MMIfaceModemSignal *self)
     if (G_UNLIKELY (!refresh_context_quark))
         refresh_context_quark  = g_quark_from_static_string (REFRESH_CONTEXT_TAG);
     if (g_object_get_qdata (G_OBJECT (self), refresh_context_quark)) {
-        mm_dbg ("Extended signal information reporting disabled");
+        mm_obj_dbg (self, "extended signal information reporting disabled");
         g_object_set_qdata (G_OBJECT (self), refresh_context_quark, NULL);
     }
 }
@@ -210,14 +197,14 @@ setup_refresh_context (MMIfaceModemSignal *self,
 
     /* User disabling? */
     if (new_rate == 0) {
-        mm_dbg ("Extended signal information reporting disabled (rate: 0 seconds)");
+        mm_obj_dbg (self, "extended signal information reporting disabled (rate: 0 seconds)");
         clear_values (self);
         g_object_set_qdata (G_OBJECT (self), refresh_context_quark, NULL);
         return TRUE;
     }
 
     if (modem_state < MM_MODEM_STATE_ENABLING) {
-        mm_dbg ("Extended signal information reporting disabled (modem not yet enabled)");
+        mm_obj_dbg (self, "extended signal information reporting disabled (modem not yet enabled)");
         return TRUE;
     }
 
@@ -238,7 +225,7 @@ setup_refresh_context (MMIfaceModemSignal *self,
     }
 
     /* Update refresh context */
-    mm_dbg ("Extended signal information reporting enabled (rate: %u seconds)", new_rate);
+    mm_obj_dbg (self, "extended signal information reporting enabled (rate: %u seconds)", new_rate);
     ctx->rate = new_rate;
     if (ctx->timeout_source)
         g_source_remove (ctx->timeout_source);
@@ -402,7 +389,7 @@ check_support_ready (MMIfaceModemSignal *self,
     if (!MM_IFACE_MODEM_SIGNAL_GET_INTERFACE (self)->check_support_finish (self, res, &error)) {
         if (error) {
             /* This error shouldn't be treated as critical */
-            mm_dbg ("Extended signal support check failed: '%s'", error->message);
+            mm_obj_dbg (self, "extended signal support check failed: %s", error->message);
             g_error_free (error);
         }
     } else {
@@ -525,7 +512,6 @@ mm_iface_modem_signal_initialize (MMIfaceModemSignal *self,
                   NULL);
     if (!skeleton) {
         skeleton = mm_gdbus_modem_signal_skeleton_new ();
-        clear_values (self);
         g_object_set (self,
                       MM_IFACE_MODEM_SIGNAL_DBUS_SKELETON, skeleton,
                       NULL);

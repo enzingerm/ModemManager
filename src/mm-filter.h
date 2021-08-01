@@ -43,6 +43,7 @@ typedef struct {
 } MMFilterClass;
 
 GType mm_filter_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMFilter, g_object_unref)
 
 typedef enum { /*< underscore_name=mm_filter_rule >*/
     MM_FILTER_RULE_NONE                  = 0,
@@ -51,16 +52,18 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
     MM_FILTER_RULE_PLUGIN_WHITELIST      = 1 << 2,
     MM_FILTER_RULE_VIRTUAL               = 1 << 3,
     MM_FILTER_RULE_NET                   = 1 << 4,
-    MM_FILTER_RULE_CDC_WDM               = 1 << 5,
-    MM_FILTER_RULE_TTY                   = 1 << 6,
-    MM_FILTER_RULE_TTY_BLACKLIST         = 1 << 7,
-    MM_FILTER_RULE_TTY_MANUAL_SCAN_ONLY  = 1 << 8,
-    MM_FILTER_RULE_TTY_PLATFORM_DRIVER   = 1 << 9,
-    MM_FILTER_RULE_TTY_DEFAULT_ALLOWED   = 1 << 10,
-    MM_FILTER_RULE_TTY_DRIVER            = 1 << 11,
-    MM_FILTER_RULE_TTY_ACM_INTERFACE     = 1 << 12,
-    MM_FILTER_RULE_TTY_WITH_NET          = 1 << 13,
-    MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN = 1 << 14,
+    MM_FILTER_RULE_USBMISC               = 1 << 5,
+    MM_FILTER_RULE_RPMSG                 = 1 << 6,
+    MM_FILTER_RULE_TTY                   = 1 << 7,
+    MM_FILTER_RULE_TTY_BLACKLIST         = 1 << 8,
+    MM_FILTER_RULE_TTY_MANUAL_SCAN_ONLY  = 1 << 9,
+    MM_FILTER_RULE_TTY_PLATFORM_DRIVER   = 1 << 10,
+    MM_FILTER_RULE_TTY_DEFAULT_ALLOWED   = 1 << 11,
+    MM_FILTER_RULE_TTY_DRIVER            = 1 << 12,
+    MM_FILTER_RULE_TTY_ACM_INTERFACE     = 1 << 13,
+    MM_FILTER_RULE_TTY_WITH_NET          = 1 << 14,
+    MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN = 1 << 15,
+    MM_FILTER_RULE_WWAN                  = 1 << 16,
 } MMFilterRule;
 
 #define MM_FILTER_RULE_ALL                  \
@@ -69,7 +72,8 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
      MM_FILTER_RULE_PLUGIN_WHITELIST      | \
      MM_FILTER_RULE_VIRTUAL               | \
      MM_FILTER_RULE_NET                   | \
-     MM_FILTER_RULE_CDC_WDM               | \
+     MM_FILTER_RULE_USBMISC               | \
+     MM_FILTER_RULE_RPMSG                 | \
      MM_FILTER_RULE_TTY                   | \
      MM_FILTER_RULE_TTY_BLACKLIST         | \
      MM_FILTER_RULE_TTY_MANUAL_SCAN_ONLY  | \
@@ -78,21 +82,24 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
      MM_FILTER_RULE_TTY_DRIVER            | \
      MM_FILTER_RULE_TTY_ACM_INTERFACE     | \
      MM_FILTER_RULE_TTY_WITH_NET          | \
-     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN)
+     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN | \
+     MM_FILTER_RULE_WWAN)
 
-/* This is the default ModemManager policy that tries to automatically probe
+/* This is the legacy ModemManager policy that tries to automatically probe
  * device ports unless they're blacklisted in some way or another. */
-#define MM_FILTER_POLICY_DEFAULT           \
+#define MM_FILTER_POLICY_LEGACY            \
     (MM_FILTER_RULE_EXPLICIT_WHITELIST   | \
      MM_FILTER_RULE_EXPLICIT_BLACKLIST   | \
      MM_FILTER_RULE_VIRTUAL              | \
      MM_FILTER_RULE_NET                  | \
-     MM_FILTER_RULE_CDC_WDM              | \
+     MM_FILTER_RULE_USBMISC              | \
+     MM_FILTER_RULE_RPMSG                | \
      MM_FILTER_RULE_TTY                  | \
      MM_FILTER_RULE_TTY_BLACKLIST        | \
      MM_FILTER_RULE_TTY_MANUAL_SCAN_ONLY | \
      MM_FILTER_RULE_TTY_PLATFORM_DRIVER  | \
-     MM_FILTER_RULE_TTY_DEFAULT_ALLOWED)
+     MM_FILTER_RULE_TTY_DEFAULT_ALLOWED  | \
+     MM_FILTER_RULE_WWAN)
 
 /* This is a stricter policy which will only automatically probe device ports
  * if they are allowed by any of the automatic whitelist rules. */
@@ -102,13 +109,15 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
      MM_FILTER_RULE_PLUGIN_WHITELIST      | \
      MM_FILTER_RULE_VIRTUAL               | \
      MM_FILTER_RULE_NET                   | \
-     MM_FILTER_RULE_CDC_WDM               | \
+     MM_FILTER_RULE_USBMISC               | \
+     MM_FILTER_RULE_RPMSG                 | \
      MM_FILTER_RULE_TTY                   | \
      MM_FILTER_RULE_TTY_PLATFORM_DRIVER   | \
      MM_FILTER_RULE_TTY_DRIVER            | \
      MM_FILTER_RULE_TTY_ACM_INTERFACE     | \
      MM_FILTER_RULE_TTY_WITH_NET          | \
-     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN)
+     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN | \
+     MM_FILTER_RULE_WWAN)
 
 /* This is equivalent to the strict policy, but also applying the device
  * blacklists explicitly */
@@ -118,7 +127,8 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
      MM_FILTER_RULE_PLUGIN_WHITELIST      | \
      MM_FILTER_RULE_VIRTUAL               | \
      MM_FILTER_RULE_NET                   | \
-     MM_FILTER_RULE_CDC_WDM               | \
+     MM_FILTER_RULE_USBMISC               | \
+     MM_FILTER_RULE_RPMSG                 | \
      MM_FILTER_RULE_TTY                   | \
      MM_FILTER_RULE_TTY_BLACKLIST         | \
      MM_FILTER_RULE_TTY_MANUAL_SCAN_ONLY  | \
@@ -126,7 +136,8 @@ typedef enum { /*< underscore_name=mm_filter_rule >*/
      MM_FILTER_RULE_TTY_DRIVER            | \
      MM_FILTER_RULE_TTY_ACM_INTERFACE     | \
      MM_FILTER_RULE_TTY_WITH_NET          | \
-     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN)
+     MM_FILTER_RULE_TTY_DEFAULT_FORBIDDEN | \
+     MM_FILTER_RULE_WWAN)
 
 /* This policy only allows using device ports explicitly whitelisted via
  * udev rules. i.e. ModemManager won't do any kind of automatic probing. */
@@ -145,6 +156,8 @@ gboolean mm_filter_device_and_port (MMFilter       *self,
 
 void     mm_filter_register_plugin_whitelist_tag        (MMFilter    *self,
                                                          const gchar *tag);
+void     mm_filter_register_plugin_whitelist_vendor_id  (MMFilter    *self,
+                                                         guint16      vid);
 void     mm_filter_register_plugin_whitelist_product_id (MMFilter    *self,
                                                          guint16      vid,
                                                          guint16      pid);

@@ -27,7 +27,7 @@
 #include "libqcdm/src/utils.h"
 #include "libqcdm/src/errors.h"
 #include "libqcdm/src/dm-commands.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 G_DEFINE_TYPE (MMPortSerialQcdm, mm_port_serial_qcdm, MM_TYPE_PORT_SERIAL)
 
@@ -206,10 +206,13 @@ mm_port_serial_qcdm_command (MMPortSerialQcdm *self,
 }
 
 static void
-debug_log (MMPortSerial *port, const char *prefix, const char *buf, gsize len)
+debug_log (MMPortSerial *self,
+           const gchar  *prefix,
+           const gchar  *buf,
+           gsize         len)
 {
     static GString *debug = NULL;
-    const char *s = buf;
+    const gchar    *s = buf;
 
     if (!debug)
         debug = g_string_sized_new (512);
@@ -219,7 +222,7 @@ debug_log (MMPortSerial *port, const char *prefix, const char *buf, gsize len)
     while (len--)
         g_string_append_printf (debug, " %02x", (guint8) (*s++ & 0xFF));
 
-    mm_dbg ("(%s): %s", mm_port_get_device (MM_PORT (port)), debug->str);
+    mm_obj_dbg (self, "%s", debug->str);
     g_string_truncate (debug, 0);
 }
 
@@ -347,11 +350,12 @@ config_fd (MMPortSerial *port, int fd, GError **error)
 /*****************************************************************************/
 
 MMPortSerialQcdm *
-mm_port_serial_qcdm_new (const char *name)
+mm_port_serial_qcdm_new (const char *name,
+                         MMPortSubsys subsys)
 {
     return MM_PORT_SERIAL_QCDM (g_object_new (MM_TYPE_PORT_SERIAL_QCDM,
                                               MM_PORT_DEVICE, name,
-                                              MM_PORT_SUBSYS, MM_PORT_SUBSYS_TTY,
+                                              MM_PORT_SUBSYS, subsys,
                                               MM_PORT_TYPE, MM_PORT_TYPE_QCDM,
                                               MM_PORT_SERIAL_SEND_DELAY, (guint64) 0,
                                               NULL));

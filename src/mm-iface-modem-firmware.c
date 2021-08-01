@@ -19,7 +19,14 @@
 
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-firmware.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
+
+#if defined WITH_QMI
+# include "mm-broadband-modem-qmi.h"
+#endif
+#if defined WITH_MBIM
+# include "mm-broadband-modem-mbim.h"
+#endif
 
 /*****************************************************************************/
 
@@ -70,16 +77,19 @@ load_current_ready (MMIfaceModemFirmware *self,
             handle_list_context_free (ctx);
             return;
         }
-        mm_dbg ("Couldn't load current firmware image: %s", error->message);
+        mm_obj_dbg (self, "couldn't load current firmware image: %s", error->message);
         g_clear_error (&error);
     }
 
     /* Build array of dicts */
     g_variant_builder_init (&builder, G_VARIANT_TYPE ("aa{sv}"));
-    for (l = ctx->list; l; l = g_list_next (l))
-        g_variant_builder_add_value (
-            &builder,
-            mm_firmware_properties_get_dictionary (MM_FIRMWARE_PROPERTIES (l->data)));
+    for (l = ctx->list; l; l = g_list_next (l)) {
+        GVariant *dict;
+
+        dict = mm_firmware_properties_get_dictionary (MM_FIRMWARE_PROPERTIES (l->data));
+        g_variant_builder_add_value (&builder, dict);
+        g_variant_unref (dict);
+    }
 
     mm_gdbus_modem_firmware_complete_list (
         ctx->skeleton,
@@ -104,7 +114,7 @@ load_list_ready (MMIfaceModemFirmware *self,
             handle_list_context_free (ctx);
             return;
         }
-        mm_dbg ("Couldn't load firmware image list: %s", error->message);
+        mm_obj_dbg (self, "couldn't load firmware image list: %s", error->message);
         g_clear_error (&error);
     }
 
@@ -287,18 +297,23 @@ add_generic_version (MMBaseModem               *self,
                      MMFirmwareUpdateSettings  *update_settings,
                      GError                   **error)
 {
-    const gchar *firmware_revision;
-    const gchar *carrier_revision;
-    gchar       *combined;
+    const gchar      *firmware_revision;
+    const gchar      *carrier_revision = NULL;
+    g_autofree gchar *combined = NULL;
+    gboolean          ignore_carrier = FALSE;
 
     firmware_revision = mm_iface_modem_get_revision (MM_IFACE_MODEM (self));
     if (!firmware_revision) {
-        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
-                     "Unknown revision");
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Unknown revision");
         return FALSE;
     }
 
-    mm_iface_modem_get_carrier_config (MM_IFACE_MODEM (self), NULL, &carrier_revision);
+    g_object_get (self,
+                  MM_IFACE_MODEM_FIRMWARE_IGNORE_CARRIER, &ignore_carrier,
+                  NULL);
+
+    if (!ignore_carrier)
+        mm_iface_modem_get_carrier_config (MM_IFACE_MODEM (self), NULL, &carrier_revision);
 
     if (!carrier_revision) {
         mm_firmware_update_settings_set_version (update_settings, firmware_revision);
@@ -307,7 +322,6 @@ add_generic_version (MMBaseModem               *self,
 
     combined = g_strdup_printf ("%s - %s", firmware_revision, carrier_revision);
     mm_firmware_update_settings_set_version (update_settings, combined);
-    g_free (combined);
     return TRUE;
 }
 
@@ -316,53 +330,75 @@ add_generic_device_ids (MMBaseModem               *self,
                         MMFirmwareUpdateSettings  *update_settings,
                         GError                   **error)
 {
-    guint16      vid;
-    guint16      pid;
-    guint16      rid;
-    GPtrArray   *ids;
-    MMPort      *primary = NULL;
-    const gchar *subsystem;
-    const gchar *aux;
+    static const gchar   *supported_subsystems[] = { "USB", "PCI" };
+    guint16               vid;
+    guint16               pid;
+    guint16               rid;
+    MMPort               *primary = NULL;
+    const gchar          *subsystem;
+    const gchar          *carrier_config = NULL;
+    g_autoptr(GPtrArray)  ids = NULL;
+    guint                 i;
+    gboolean              ignore_carrier = FALSE;
 
     vid = mm_base_modem_get_vendor_id (self);
     pid = mm_base_modem_get_product_id (self);
 
 #if defined WITH_QMI
-    primary = MM_PORT (mm_base_modem_peek_port_qmi (self));
+    if (MM_IS_BROADBAND_MODEM_QMI (self))
+        primary = MM_PORT (mm_broadband_modem_qmi_peek_port_qmi (MM_BROADBAND_MODEM_QMI (self)));
 #endif
 #if defined WITH_MBIM
-    if (!primary)
-        primary = MM_PORT (mm_base_modem_peek_port_mbim (self));
+    if (!primary && MM_IS_BROADBAND_MODEM_MBIM (self))
+        primary = MM_PORT (mm_broadband_modem_mbim_peek_port_mbim (MM_BROADBAND_MODEM_MBIM (self)));
 #endif
     if (!primary)
         primary = MM_PORT (mm_base_modem_peek_port_primary (self));
     g_assert (primary != NULL);
     rid = mm_kernel_device_get_physdev_revision (mm_port_peek_kernel_device (primary));
 
+
     subsystem = mm_kernel_device_get_physdev_subsystem (mm_port_peek_kernel_device (primary));
-    if (g_strcmp0 (subsystem, "usb")) {
+    if (!subsystem) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Unknown device subsystem");
+        return FALSE;
+    }
+
+    for (i = 0; i < G_N_ELEMENTS (supported_subsystems); i++) {
+        if (g_ascii_strcasecmp (supported_subsystems[i], subsystem) == 0)
+            break;
+    }
+    if (i == G_N_ELEMENTS (supported_subsystems)) {
         g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
                      "Unsupported subsystem: %s", subsystem);
         return FALSE;
     }
 
-    mm_iface_modem_get_carrier_config (MM_IFACE_MODEM (self), &aux, NULL);
+    g_object_get (self,
+                  MM_IFACE_MODEM_FIRMWARE_IGNORE_CARRIER, &ignore_carrier,
+                  NULL);
+
+    if (!ignore_carrier)
+        mm_iface_modem_get_carrier_config (MM_IFACE_MODEM (self), &carrier_config, NULL);
 
     ids = g_ptr_array_new_with_free_func (g_free);
-    if (aux) {
-        gchar *carrier;
+    if (carrier_config) {
+        g_autofree gchar *carrier = NULL;
 
-        carrier = g_ascii_strup (aux, -1);
-        g_ptr_array_add (ids, g_strdup_printf ("USB\\VID_%04X&PID_%04X&REV_%04X&CARRIER_%s", vid, pid, rid, carrier));
-        g_free (carrier);
+        carrier = g_ascii_strup (carrier_config, -1);
+        g_ptr_array_add (ids, g_strdup_printf ("%s\\VID_%04X&PID_%04X&REV_%04X&CARRIER_%s",
+                                               supported_subsystems[i], vid, pid, rid, carrier));
     }
-    g_ptr_array_add (ids, g_strdup_printf ("USB\\VID_%04X&PID_%04X&REV_%04X", vid, pid, rid));
-    g_ptr_array_add (ids, g_strdup_printf ("USB\\VID_%04X&PID_%04X", vid, pid));
-    g_ptr_array_add (ids, g_strdup_printf ("USB\\VID_%04X", vid));
+    g_ptr_array_add (ids, g_strdup_printf ("%s\\VID_%04X&PID_%04X&REV_%04X",
+                                           supported_subsystems[i], vid, pid, rid));
+    g_ptr_array_add (ids, g_strdup_printf ("%s\\VID_%04X&PID_%04X",
+                                           supported_subsystems[i], vid, pid));
+    g_ptr_array_add (ids, g_strdup_printf ("%s\\VID_%04X",
+                                           supported_subsystems[i], vid));
     g_ptr_array_add (ids, NULL);
 
     mm_firmware_update_settings_set_device_ids (update_settings, (const gchar **)ids->pdata);
-    g_ptr_array_unref (ids);
     return TRUE;
 }
 
@@ -380,7 +416,7 @@ load_update_settings_ready (MMIfaceModemFirmware *self,
 
     update_settings = MM_IFACE_MODEM_FIRMWARE_GET_INTERFACE (self)->load_update_settings_finish (self, res, &error);
     if (!update_settings) {
-        mm_dbg ("Couldn't load update settings: '%s'", error->message);
+        mm_obj_dbg (self, "couldn't load update settings: %s", error->message);
         g_error_free (error);
         goto out;
     }
@@ -388,7 +424,7 @@ load_update_settings_ready (MMIfaceModemFirmware *self,
     /* If the plugin didn't specify custom device ids, add the default ones ourselves */
     if (!mm_firmware_update_settings_get_device_ids (update_settings) &&
         !add_generic_device_ids (MM_BASE_MODEM (self), update_settings, &error)) {
-        mm_warn ("Couldn't build device ids: '%s'", error->message);
+        mm_obj_warn (self, "couldn't build device ids: %s", error->message);
         g_error_free (error);
         g_clear_object (&update_settings);
         goto out;
@@ -397,7 +433,7 @@ load_update_settings_ready (MMIfaceModemFirmware *self,
     /* If the plugin didn't specify custom version, add the default one ourselves */
     if (!mm_firmware_update_settings_get_version (update_settings) &&
         !add_generic_version (MM_BASE_MODEM (self), update_settings, &error)) {
-        mm_warn ("Couldn't set version: '%s'", error->message);
+        mm_obj_warn (self, "couldn't set version: %s", error->message);
         g_error_free (error);
         g_clear_object (&update_settings);
         goto out;
@@ -535,6 +571,14 @@ iface_modem_firmware_init (gpointer g_iface)
                               "DBus skeleton for the Firmware interface",
                               MM_GDBUS_TYPE_MODEM_FIRMWARE_SKELETON,
                               G_PARAM_READWRITE));
+
+    g_object_interface_install_property
+        (g_iface,
+         g_param_spec_boolean (MM_IFACE_MODEM_FIRMWARE_IGNORE_CARRIER,
+                               "Ignore carrier info in firmware details",
+                               "Whether carrier info (version, name) should be ignored when showing the firmware details",
+                               FALSE,
+                               G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
     initialized = TRUE;
 }

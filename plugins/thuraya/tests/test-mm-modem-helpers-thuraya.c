@@ -24,7 +24,7 @@
 
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-thuraya.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 /*****************************************************************************/
 /* Test CPMS response */
@@ -55,10 +55,12 @@ test_cpms_response_thuraya (void *f, gpointer d)
     GArray *mem1 = NULL;
     GArray *mem2 = NULL;
     GArray *mem3 = NULL;
+    GError *error = NULL;
 
     g_debug ("Testing thuraya +CPMS=? response...");
 
-    g_assert (mm_thuraya_3gpp_parse_cpms_test_response (reply, &mem1, &mem2, &mem3));
+    g_assert (mm_thuraya_3gpp_parse_cpms_test_response (reply, &mem1, &mem2, &mem3, &error));
+    g_assert_no_error (error);
     g_assert_cmpuint (mem1->len, ==, 5);
     g_assert (is_storage_supported (mem1, MM_SMS_STORAGE_MT));
     g_assert (is_storage_supported (mem1, MM_SMS_STORAGE_SM));
@@ -84,26 +86,6 @@ test_cpms_response_thuraya (void *f, gpointer d)
 }
 
 /*****************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 #define TESTCASE(t, d) g_test_create_case (#t, 0, d, NULL, (GTestFixtureFunc) t, NULL)
 

@@ -153,7 +153,11 @@ mm_bearer_list_find_by_properties (MMBearerList       *self,
     GList *l;
 
     for (l = self->priv->bearers; l; l = g_list_next (l)) {
-        if (mm_bearer_properties_cmp (mm_base_bearer_peek_config (MM_BASE_BEARER (l->data)), props))
+        /* always strict matching when comparing these bearer properties, as they're all
+         * built in the same place */
+        if (mm_bearer_properties_cmp (mm_base_bearer_peek_config (MM_BASE_BEARER (l->data)),
+                                      props,
+                                      MM_BEARER_PROPERTIES_CMP_FLAGS_NONE))
             return g_object_ref (l->data);
     }
 
@@ -268,10 +272,6 @@ MMBearerList *
 mm_bearer_list_new (guint max_bearers,
                     guint max_active_bearers)
 {
-    mm_dbg ("Creating bearer list (max: %u, max active: %u)",
-            max_bearers,
-            max_active_bearers);
-
     /* Create the object */
     return g_object_new  (MM_TYPE_BEARER_LIST,
                           MM_BEARER_LIST_MAX_BEARERS, max_bearers,

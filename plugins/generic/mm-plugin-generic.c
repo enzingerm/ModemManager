@@ -31,7 +31,7 @@
 #include "mm-plugin-generic.h"
 #include "mm-broadband-modem.h"
 #include "mm-serial-parsers.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 #if defined WITH_QMI
 #include "mm-broadband-modem-qmi.h"
@@ -59,7 +59,7 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered generic modem found...");
+        mm_obj_dbg (self, "QMI-powered generic modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_new (uid,
                                                           drivers,
                                                           mm_plugin_get_name (self),
@@ -70,7 +70,7 @@ create_modem (MMPlugin *self,
 
 #if defined WITH_MBIM
     if (mm_port_probe_list_has_mbim_port (probes)) {
-        mm_dbg ("MBIM-powered generic modem found...");
+        mm_obj_dbg (self, "MBIM-powered generic modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_mbim_new (uid,
                                                            drivers,
                                                            mm_plugin_get_name (self),
@@ -91,11 +91,12 @@ create_modem (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", "wwan", NULL };
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_GENERIC,
-                      MM_PLUGIN_NAME,               MM_PLUGIN_GENERIC_NAME,
+                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
+                      MM_PLUGIN_IS_GENERIC,         TRUE,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_AT,         TRUE,
                       MM_PLUGIN_ALLOWED_QCDM,       TRUE,

@@ -25,9 +25,12 @@
 
 #include "mm-device.h"
 #include "mm-plugin.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
-G_DEFINE_TYPE (MMDevice, mm_device, G_TYPE_OBJECT)
+static void log_object_iface_init (MMLogObjectInterface *iface);
+
+G_DEFINE_TYPE_EXTENDED (MMDevice, mm_device, G_TYPE_OBJECT, 0,
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_LOG_OBJECT, log_object_iface_init))
 
 enum {
     PROP_0,
@@ -94,30 +97,54 @@ struct _MMDevicePrivate {
 /*****************************************************************************/
 
 static MMPortProbe *
+probe_list_lookup_by_device (GList          *port_probes,
+                             MMKernelDevice *kernel_port)
+{
+    GList *l;
+
+    for (l = port_probes; l; l = g_list_next (l)) {
+        MMPortProbe *probe = MM_PORT_PROBE (l->data);
+
+        if (mm_kernel_device_cmp (mm_port_probe_peek_port (probe), kernel_port))
+            return probe;
+    }
+    return NULL;
+}
+
+static MMPortProbe *
+probe_list_lookup_by_name (GList       *port_probes,
+                           const gchar *subsystem,
+                           const gchar *name)
+{
+    GList *l;
+
+    for (l = port_probes; l; l = g_list_next (l)) {
+        MMPortProbe    *probe = MM_PORT_PROBE (l->data);
+        MMKernelDevice *probe_device;
+
+        probe_device = mm_port_probe_peek_port (probe);
+        if ((g_strcmp0 (subsystem, mm_kernel_device_get_subsystem (probe_device)) == 0) &&
+            (g_strcmp0 (name,      mm_kernel_device_get_name      (probe_device)) == 0))
+            return probe;
+    }
+    return NULL;
+}
+
+static MMPortProbe *
 device_find_probe_with_device (MMDevice       *self,
                                MMKernelDevice *kernel_port,
                                gboolean        lookup_ignored)
 {
-    GList *l;
+    MMPortProbe *probe;
 
-    for (l = self->priv->port_probes; l; l = g_list_next (l)) {
-        MMPortProbe *probe = MM_PORT_PROBE (l->data);
-
-        if (mm_kernel_device_cmp (mm_port_probe_peek_port (probe), kernel_port))
-            return probe;
-    }
+    probe = probe_list_lookup_by_device (self->priv->port_probes, kernel_port);
+    if (probe)
+        return probe;
 
     if (!lookup_ignored)
         return NULL;
 
-    for (l = self->priv->ignored_port_probes; l; l = g_list_next (l)) {
-        MMPortProbe *probe = MM_PORT_PROBE (l->data);
-
-        if (mm_kernel_device_cmp (mm_port_probe_peek_port (probe), kernel_port))
-            return probe;
-    }
-
-    return NULL;
+    return probe_list_lookup_by_device (self->priv->ignored_port_probes, kernel_port);
 }
 
 gboolean
@@ -125,6 +152,28 @@ mm_device_owns_port (MMDevice       *self,
                      MMKernelDevice *kernel_port)
 {
     return !!device_find_probe_with_device (self, kernel_port, TRUE);
+}
+
+static MMPortProbe *
+device_find_probe_with_name (MMDevice    *self,
+                             const gchar *subsystem,
+                             const gchar *name)
+{
+    MMPortProbe *probe;
+
+    probe = probe_list_lookup_by_name (self->priv->port_probes, subsystem, name);
+    if (probe)
+        return probe;
+
+    return probe_list_lookup_by_name (self->priv->ignored_port_probes, subsystem, name);
+}
+
+gboolean
+mm_device_owns_port_name (MMDevice    *self,
+                          const gchar *subsystem,
+                          const gchar *name)
+{
+    return !!device_find_probe_with_name (self, subsystem, name);
 }
 
 static void
@@ -187,12 +236,13 @@ mm_device_grab_port (MMDevice       *self,
 }
 
 void
-mm_device_release_port (MMDevice       *self,
-                        MMKernelDevice *kernel_port)
+mm_device_release_port_name (MMDevice    *self,
+                             const gchar *subsystem,
+                             const gchar *name)
 {
     MMPortProbe *probe;
 
-    probe = device_find_probe_with_device (self, kernel_port, TRUE);
+    probe = device_find_probe_with_name (self, subsystem, name);
     if (probe) {
         /* Found, remove from lists and destroy probe */
         if (g_list_find (self->priv->port_probes, probe))
@@ -215,10 +265,8 @@ mm_device_ignore_port  (MMDevice       *self,
     probe = device_find_probe_with_device (self, kernel_port, FALSE);
     if (probe) {
         /* Found, remove from list and add to the ignored list */
-        mm_dbg ("[device %s] fully ignoring port '%s/%s' from now on",
-                self->priv->uid,
-                mm_kernel_device_get_subsystem (kernel_port),
-                mm_kernel_device_get_name (kernel_port));
+        mm_obj_dbg (self, "fully ignoring port %s from now on",
+                    mm_kernel_device_get_name (kernel_port));
         self->priv->port_probes = g_list_remove (self->priv->port_probes, probe);
         self->priv->ignored_port_probes = g_list_prepend (self->priv->ignored_port_probes, probe);
     }
@@ -240,7 +288,7 @@ unexport_modem (MMDevice *self)
         g_object_set (self->priv->modem,
                       MM_BASE_MODEM_CONNECTION, NULL,
                       NULL);
-        mm_dbg ("[device %s] unexported modem from path '%s'", self->priv->uid, path);
+        mm_obj_dbg (self, "unexported modem from path '%s'", path);
         g_free (path);
     }
 }
@@ -251,15 +299,14 @@ static void
 export_modem (MMDevice *self)
 {
     GDBusConnection *connection = NULL;
-    static guint32 id = 0;
-    gchar *path;
+    gchar           *path;
 
     g_assert (MM_IS_BASE_MODEM (self->priv->modem));
     g_assert (G_IS_DBUS_OBJECT_MANAGER (self->priv->object_manager));
 
     /* If modem not yet valid (not fully initialized), don't export it */
     if (!mm_base_modem_get_valid (self->priv->modem)) {
-        mm_dbg ("[device %s] modem not yet fully initialized", self->priv->uid);
+        mm_obj_dbg (self, "modem not yet fully initialized");
         return;
     }
 
@@ -269,13 +316,13 @@ export_modem (MMDevice *self)
                   NULL);
     if (path) {
         g_free (path);
-        mm_dbg ("[device %s] modem already exported", self->priv->uid);
+        mm_obj_dbg (self, "modem already exported");
         return;
     }
 
     /* No outstanding port tasks, so if the modem is valid we can export it */
 
-    path = g_strdup_printf (MM_DBUS_MODEM_PREFIX "/%d", id++);
+    path = g_strdup_printf (MM_DBUS_MODEM_PREFIX "/%d", mm_base_modem_get_dbus_id (self->priv->modem));
     g_object_get (self->priv->object_manager,
                   "connection", &connection,
                   NULL);
@@ -288,14 +335,13 @@ export_modem (MMDevice *self)
     g_dbus_object_manager_server_export (self->priv->object_manager,
                                          G_DBUS_OBJECT_SKELETON (self->priv->modem));
 
-    mm_dbg ("[device %s] exported modem at path '%s'", self->priv->uid, path);
-    mm_dbg ("[device %s]    plugin:  %s", self->priv->uid, mm_base_modem_get_plugin (self->priv->modem));
-    mm_dbg ("[device %s]    vid:pid: 0x%04X:0x%04X",
-            self->priv->uid,
-            (mm_base_modem_get_vendor_id (self->priv->modem) & 0xFFFF),
-            (mm_base_modem_get_product_id (self->priv->modem) & 0xFFFF));
+    mm_obj_dbg (self, " exported modem at path '%s'", path);
+    mm_obj_dbg (self, "    plugin:  %s", mm_base_modem_get_plugin (self->priv->modem));
+    mm_obj_dbg (self, "    vid:pid: 0x%04X:0x%04X",
+                (mm_base_modem_get_vendor_id (self->priv->modem) & 0xFFFF),
+                (mm_base_modem_get_product_id (self->priv->modem) & 0xFFFF));
     if (self->priv->virtual)
-        mm_dbg ("[device %s]    virtual", self->priv->uid);
+        mm_obj_dbg (self, "    virtual");
 
     g_free (path);
 }
@@ -337,13 +383,14 @@ reprobe (MMDevice *self)
 {
     GError *error = NULL;
 
+    self->priv->reprobe_id = 0;
+
+    mm_obj_dbg (self, "Reprobing modem...");
     if (!mm_device_create_modem (self, &error)) {
-        mm_warn ("Could not recreate modem for device '%s': %s",
-                 self->priv->uid,
-                 error ? error->message : "unknown");
+        mm_obj_warn (self, "could not recreate modem: %s", error->message);
         g_error_free (error);
     } else
-        mm_dbg ("Modem recreated for device '%s'", self->priv->uid);
+        mm_obj_dbg (self, "modem recreated");
 
     return G_SOURCE_REMOVE;
 }
@@ -366,7 +413,7 @@ modem_valid (MMBaseModem *modem,
         if (self->priv->modem)
             export_modem (self);
         else
-            mm_dbg ("[device %s] not exporting modem; no longer available", self->priv->uid);
+            mm_obj_dbg (self, "not exporting modem; no longer available");
     }
 }
 
@@ -391,10 +438,9 @@ mm_device_create_modem (MMDevice  *self,
             return FALSE;
         }
 
-        mm_info ("[device %s] creating modem with plugin '%s' and '%u' ports",
-                 self->priv->uid,
-                 mm_plugin_get_name (self->priv->plugin),
-                 g_list_length (self->priv->port_probes));
+        mm_obj_info (self, "creating modem with plugin '%s' and '%u' ports",
+                     mm_plugin_get_name (self->priv->plugin),
+                     g_list_length (self->priv->port_probes));
     } else {
         if (!self->priv->virtual_ports) {
             g_set_error (error,
@@ -404,10 +450,9 @@ mm_device_create_modem (MMDevice  *self,
             return FALSE;
         }
 
-        mm_info ("[device %s] creating virtual modem with plugin '%s' and '%u' ports",
-                 self->priv->uid,
-                 mm_plugin_get_name (self->priv->plugin),
-                 g_strv_length (self->priv->virtual_ports));
+        mm_obj_info (self, "creating virtual modem with plugin '%s' and '%u' ports",
+                     mm_plugin_get_name (self->priv->plugin),
+                     g_strv_length (self->priv->virtual_ports));
     }
 
     self->priv->modem = mm_plugin_create_modem (self->priv->plugin, self, error);
@@ -640,6 +685,17 @@ mm_device_is_virtual (MMDevice *self)
 
 /*****************************************************************************/
 
+static gchar *
+log_object_build_id (MMLogObject *_self)
+{
+    MMDevice *self;
+
+    self = MM_DEVICE (_self);
+    return g_strdup_printf ("device %s", self->priv->uid);
+}
+
+/*****************************************************************************/
+
 MMDevice *
 mm_device_new (const gchar              *uid,
                gboolean                  hotplugged,
@@ -770,6 +826,12 @@ finalize (GObject *object)
     g_strfreev (self->priv->virtual_ports);
 
     G_OBJECT_CLASS (mm_device_parent_class)->finalize (object);
+}
+
+static void
+log_object_iface_init (MMLogObjectInterface *iface)
+{
+    iface->build_id = log_object_build_id;
 }
 
 static void

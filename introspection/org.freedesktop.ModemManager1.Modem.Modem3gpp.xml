@@ -200,7 +200,25 @@
     <!--
         Pco:
 
-        The raw PCOs received from the network.
+        The raw PCOs received from the network, given as array of PCO
+        elements (signature <literal>"a(ubay)"</literal>).
+
+        Each PCO is defined as a sequence of 3 fields:
+        <orderedlist>
+          <listitem>
+            The session ID associated with the PCO, given as an
+            unsigned integer value (signature <literal>"u"</literal>).
+          </listitem>
+          <listitem>
+            The flag that indicates whether the PCO data contains the
+            complete PCO structure received from the network, given as
+            a boolean value (signature <literal>"b"</literal>).
+          </listitem>
+          <listitem>
+            The raw  PCO data, given as an array of bytes (signature
+            <literal>"ay"</literal>).
+          </listitem>
+        </orderedlist>
     -->
     <property name="Pco" type="a(ubay)" access="read" />
 
@@ -219,8 +237,9 @@
 
         The network may decide to use different settings during the actual device attach
         procedure, e.g. if the device is roaming or no explicit settings were requested,
-        so the properties shown in the #org.freedesktop.ModemManager1.Modem.Modem3gpp.InitialEpsBearer:InitialEpsBearer
-        may be totally different.
+        so the values shown in the
+        #org.freedesktop.ModemManager1.Modem.Modem3gpp:InitialEpsBearer
+        bearer object may be totally different.
 
         This is a read-only property, updating these settings should be done using the
         <link linkend="gdbus-method-org-freedesktop-ModemManager1-Modem-Modem3gpp.SetInitialEpsBearerSettings">SetInitialEpsBearerSettings()</link>

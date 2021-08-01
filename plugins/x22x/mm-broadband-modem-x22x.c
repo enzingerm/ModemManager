@@ -90,7 +90,7 @@ parent_load_supported_modes_ready (MMIfaceModem *self,
     g_array_append_val (combinations, mode);
 
     /* Filter out those unsupported modes */
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 
@@ -300,7 +300,6 @@ load_access_technologies (MMIfaceModem *self,
                           GAsyncReadyCallback callback,
                           gpointer user_data)
 {
-    mm_dbg ("loading access technology (x22x)...");
     mm_base_modem_at_command (MM_BASE_MODEM (self),
                               "+SSND?",
                               3,

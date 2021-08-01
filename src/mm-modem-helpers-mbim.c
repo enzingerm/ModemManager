@@ -17,13 +17,16 @@
 #include "mm-modem-helpers.h"
 #include "mm-enums-types.h"
 #include "mm-errors-types.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
+
+#include <string.h>
 
 /*****************************************************************************/
 
 MMModemCapability
-mm_modem_capability_from_mbim_device_caps (MbimCellularClass caps_cellular_class,
-                                           MbimDataClass     caps_data_class)
+mm_modem_capability_from_mbim_device_caps (MbimCellularClass  caps_cellular_class,
+                                           MbimDataClass      caps_data_class,
+                                           const gchar       *caps_custom_data_class)
 {
     MMModemCapability mask = 0;
 
@@ -37,6 +40,12 @@ mm_modem_capability_from_mbim_device_caps (MbimCellularClass caps_cellular_class
 
     if (caps_data_class & MBIM_DATA_CLASS_LTE)
         mask |= MM_MODEM_CAPABILITY_LTE;
+
+    if ((caps_data_class & MBIM_DATA_CLASS_CUSTOM) && caps_custom_data_class) {
+        /* e.g. Gosuncn GM800 reports MBIM custom data class "5G/TDS" */
+        if (strstr (caps_custom_data_class, "5G"))
+            mask |= MM_MODEM_CAPABILITY_5GNR;
+    }
 
     return mask;
 }
@@ -367,6 +376,7 @@ mm_bearer_allowed_auth_from_mbim_auth_protocol (MbimAuthProtocol auth_protocol)
 
 MbimAuthProtocol
 mm_bearer_allowed_auth_to_mbim_auth_protocol (MMBearerAllowedAuth   bearer_auth,
+                                              gpointer              log_object,
                                               GError              **error)
 {
     gchar *str;
@@ -374,13 +384,13 @@ mm_bearer_allowed_auth_to_mbim_auth_protocol (MMBearerAllowedAuth   bearer_auth,
     /* NOTE: the input is a BITMASK, so we try to find a "best match" */
 
     if (bearer_auth == MM_BEARER_ALLOWED_AUTH_UNKNOWN) {
-        mm_dbg ("Using default (PAP) authentication method");
-        return MBIM_AUTH_PROTOCOL_PAP;
+        mm_obj_dbg (log_object, "using default (CHAP) authentication method");
+        return MBIM_AUTH_PROTOCOL_CHAP;
     }
-    if (bearer_auth & MM_BEARER_ALLOWED_AUTH_PAP)
-        return MBIM_AUTH_PROTOCOL_PAP;
     if (bearer_auth & MM_BEARER_ALLOWED_AUTH_CHAP)
         return MBIM_AUTH_PROTOCOL_CHAP;
+    if (bearer_auth & MM_BEARER_ALLOWED_AUTH_PAP)
+        return MBIM_AUTH_PROTOCOL_PAP;
     if (bearer_auth & MM_BEARER_ALLOWED_AUTH_MSCHAPV2)
         return MBIM_AUTH_PROTOCOL_MSCHAPV2;
     if (bearer_auth & MM_BEARER_ALLOWED_AUTH_NONE)

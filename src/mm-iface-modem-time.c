@@ -19,7 +19,7 @@
 
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-time.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 #define SUPPORT_CHECKED_TAG          "time-support-checked-tag"
 #define SUPPORTED_TAG                "time-supported-tag"
@@ -194,7 +194,7 @@ static void
 load_network_timezone_ready (MMIfaceModemTime *self,
                              GAsyncResult *res)
 {
-    GError *error = NULL;
+    g_autoptr(GError)  error = NULL;
     MMNetworkTimezone *tz;
 
     /* Finish the async operation */
@@ -202,8 +202,7 @@ load_network_timezone_ready (MMIfaceModemTime *self,
     if (!tz) {
         NetworkTimezoneContext *ctx;
 
-        mm_dbg ("Couldn't load network timezone: %s", error->message);
-        g_error_free (error);
+        mm_obj_dbg (self, "couldn't load network timezone: %s", error->message);
 
         /* Note: may be NULL if the polling has been removed while processing the async operation */
         ctx = (NetworkTimezoneContext *) g_object_get_qdata (G_OBJECT (self), network_timezone_context_quark);
@@ -216,7 +215,7 @@ load_network_timezone_ready (MMIfaceModemTime *self,
         /* If no more retries, we don't do anything else */
         if (ctx->network_timezone_poll_retries == 0 ||
             !g_error_matches (error, MM_CORE_ERROR, MM_CORE_ERROR_RETRY)) {
-            mm_warn ("Couldn't load network timezone from the current network");
+            mm_obj_warn (self, "couldn't load network timezone from the current network");
             return;
         }
 
@@ -255,7 +254,7 @@ start_network_timezone_poll (MMIfaceModemTime *self)
 
     ctx = (NetworkTimezoneContext *) g_object_get_qdata (G_OBJECT (self), network_timezone_context_quark);
 
-    mm_dbg ("Network timezone polling started");
+    mm_obj_dbg (self, "network timezone polling started");
     ctx->network_timezone_poll_retries = NETWORK_TIMEZONE_POLL_RETRIES;
     ctx->network_timezone_poll_id = g_timeout_add_seconds (NETWORK_TIMEZONE_POLL_INTERVAL_SEC, (GSourceFunc)network_timezone_poll_cb, self);
 }
@@ -268,7 +267,7 @@ stop_network_timezone_poll (MMIfaceModemTime *self)
     ctx = (NetworkTimezoneContext *) g_object_get_qdata (G_OBJECT (self), network_timezone_context_quark);
 
     if (ctx->network_timezone_poll_id) {
-        mm_dbg ("Network timezone polling stopped");
+        mm_obj_dbg (self, "network timezone polling stopped");
         g_source_remove (ctx->network_timezone_poll_id);
         ctx->network_timezone_poll_id = 0;
     }
@@ -322,7 +321,7 @@ start_network_timezone (MMIfaceModemTime *self)
     /* If loading network timezone not supported, just finish here */
     if (!MM_IFACE_MODEM_TIME_GET_INTERFACE (self)->load_network_timezone ||
         !MM_IFACE_MODEM_TIME_GET_INTERFACE (self)->load_network_timezone_finish) {
-        mm_dbg ("Loading network timezone is not supported");
+        mm_obj_dbg (self, "loading network timezone is not supported");
         return;
     }
 
@@ -622,7 +621,7 @@ enable_unsolicited_events_ready (MMIfaceModemTime *self,
 
     /* Not critical! */
     if (!MM_IFACE_MODEM_TIME_GET_INTERFACE (self)->enable_unsolicited_events_finish (self, res, &error)) {
-        mm_dbg ("Couldn't enable unsolicited events: '%s'", error->message);
+        mm_obj_dbg (self, "couldn't enable unsolicited events: %s", error->message);
         g_error_free (error);
     }
 
@@ -764,7 +763,7 @@ check_support_ready (MMIfaceModemTime *self,
                                                                          &error)) {
         if (error) {
             /* This error shouldn't be treated as critical */
-            mm_dbg ("Time support check failed: '%s'", error->message);
+            mm_obj_dbg (self, "time support check failed: %s", error->message);
             g_error_free (error);
         }
     } else {

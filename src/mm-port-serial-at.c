@@ -22,7 +22,7 @@
 #include <string.h>
 
 #include "mm-port-serial-at.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 G_DEFINE_TYPE (MMPortSerialAt, mm_port_serial_at, MM_TYPE_PORT_SERIAL)
 
@@ -148,7 +148,7 @@ parse_response (MMPortSerial *port,
 
     /* Parse it; returns FALSE if there is nothing we can do with this
      * response yet. */
-    if (!self->priv->response_parser_fn (self->priv->response_parser_user_data, string, &inner_error)) {
+    if (!self->priv->response_parser_fn (self->priv->response_parser_user_data, string, self, &inner_error)) {
         /* Copy what we got back in the response buffer. */
         g_byte_array_append (response, (const guint8 *) string->str, string->len);
         g_string_free (string, TRUE);
@@ -435,10 +435,13 @@ mm_port_serial_at_command (MMPortSerialAt *self,
 }
 
 static void
-debug_log (MMPortSerial *port, const char *prefix, const char *buf, gsize len)
+debug_log (MMPortSerial *self,
+           const gchar  *prefix,
+           const gchar  *buf,
+           gsize         len)
 {
     static GString *debug = NULL;
-    const char *s;
+    const  char    *s;
 
     if (!debug)
         debug = g_string_sized_new (256);
@@ -461,7 +464,7 @@ debug_log (MMPortSerial *port, const char *prefix, const char *buf, gsize len)
     }
 
     g_string_append_c (debug, '\'');
-    mm_dbg ("(%s): %s", mm_port_get_device (MM_PORT (port)), debug->str);
+    mm_obj_dbg (self, "%s", debug->str);
     g_string_truncate (debug, 0);
 }
 
@@ -470,6 +473,8 @@ mm_port_serial_at_set_flags (MMPortSerialAt *self, MMPortSerialAtFlag flags)
 {
     g_return_if_fail (self != NULL);
     g_return_if_fail (MM_IS_PORT_SERIAL_AT (self));
+
+    /* MM_PORT_SERIAL_AT_FLAG_NONE_NO_GENERIC is not expected */
     g_return_if_fail (flags <= (MM_PORT_SERIAL_AT_FLAG_PRIMARY |
                                 MM_PORT_SERIAL_AT_FLAG_SECONDARY |
                                 MM_PORT_SERIAL_AT_FLAG_PPP |
@@ -497,7 +502,7 @@ mm_port_serial_at_run_init_sequence (MMPortSerialAt *self)
     if (!self->priv->init_sequence)
         return;
 
-    mm_dbg ("(%s): running init sequence...", mm_port_get_device (MM_PORT (self)));
+    mm_obj_dbg (self, "running init sequence...");
 
     /* Just queue the init commands, don't wait for reply */
     for (i = 0; self->priv->init_sequence[i]; i++) {
@@ -524,17 +529,13 @@ config (MMPortSerial *_self)
 /*****************************************************************************/
 
 MMPortSerialAt *
-mm_port_serial_at_new (const char *name,
-                       MMPortSubsys subsys)
+mm_port_serial_at_new (const char   *name,
+                       MMPortSubsys  subsys)
 {
-    g_return_val_if_fail (subsys == MM_PORT_SUBSYS_TTY ||
-                          subsys == MM_PORT_SUBSYS_USB ||
-                          subsys == MM_PORT_SUBSYS_UNIX, NULL);
-
     return MM_PORT_SERIAL_AT (g_object_new (MM_TYPE_PORT_SERIAL_AT,
                                             MM_PORT_DEVICE, name,
                                             MM_PORT_SUBSYS, subsys,
-                                            MM_PORT_TYPE, MM_PORT_TYPE_AT,
+                                            MM_PORT_TYPE,   MM_PORT_TYPE_AT,
                                             NULL));
 }
 

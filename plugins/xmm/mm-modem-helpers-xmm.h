@@ -21,6 +21,7 @@
 
 /* AT+XACT=? response parser */
 gboolean mm_xmm_parse_xact_test_response (const gchar  *response,
+                                          gpointer      logger,
                                           GArray      **modes_out,
                                           GArray      **bands_out,
                                           GError      **error);
@@ -50,6 +51,7 @@ gboolean mm_xmm_parse_xcesq_query_response (const gchar  *response,
                                             GError      **error);
 
 gboolean mm_xmm_xcesq_response_to_signal_info (const gchar  *response,
+                                               gpointer      log_object,
                                                MMSignal    **out_gsm,
                                                MMSignal    **out_umts,
                                                MMSignal    **out_lte,

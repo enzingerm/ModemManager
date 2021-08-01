@@ -22,7 +22,6 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
 #include "mm-plugin-sierra-legacy.h"
 #include "mm-common-sierra.h"
 #include "mm-broadband-modem-sierra.h"
@@ -73,7 +72,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_SIERRA_LEGACY,
-                      MM_PLUGIN_NAME,                "Sierra (legacy)",
+                      MM_PLUGIN_NAME,                MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,  subsystems,
                       MM_PLUGIN_ALLOWED_DRIVERS,     drivers,
                       MM_PLUGIN_FORBIDDEN_DRIVERS,   forbidden_drivers,

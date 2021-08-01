@@ -602,6 +602,10 @@ mm_bearer_properties_consume_variant (MMBearerProperties *properties,
         mm_bearer_properties_set_allow_roaming (
             properties,
             g_variant_get_boolean (value));
+    else if (g_str_equal (key, PROPERTY_RM_PROTOCOL))
+        mm_bearer_properties_set_rm_protocol (
+            properties,
+            g_variant_get_uint32 (value));
     else if (g_str_equal (key, DEPRECATED_PROPERTY_NUMBER)) {
         /* NO-OP */
     } else {
@@ -667,21 +671,85 @@ mm_bearer_properties_new_from_dictionary (GVariant *dictionary,
 
 /*****************************************************************************/
 
+static gboolean
+cmp_str (const gchar                *a,
+         const gchar                *b,
+         MMBearerPropertiesCmpFlags  flags)
+{
+    /* Strict match */
+    if ((!a && !b) || (a && b && g_strcmp0 (a, b) == 0))
+        return TRUE;
+    /* Additional loose match, consider NULL and EMPTY string equal */
+    if (flags & MM_BEARER_PROPERTIES_CMP_FLAGS_LOOSE) {
+        if ((!a && !b[0]) || (!b && !a[0]))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+cmp_ip_type (MMBearerIpFamily           a,
+             MMBearerIpFamily           b,
+             MMBearerPropertiesCmpFlags flags)
+{
+    /* Strict match */
+    if (a == b)
+        return TRUE;
+    /* Additional loose match NONE == IPV4 */
+    if (flags & MM_BEARER_PROPERTIES_CMP_FLAGS_LOOSE) {
+        if ((a == MM_BEARER_IP_FAMILY_NONE && b == MM_BEARER_IP_FAMILY_IPV4) ||
+            (b == MM_BEARER_IP_FAMILY_NONE && a == MM_BEARER_IP_FAMILY_IPV4))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+cmp_allowed_auth (MMBearerAllowedAuth        a,
+                  MMBearerAllowedAuth        b,
+                  MMBearerPropertiesCmpFlags flags)
+{
+    /* Strict match */
+    if (a == b)
+        return TRUE;
+    /* Additional loose match UNKNOWN == NONE */
+    if (flags & MM_BEARER_PROPERTIES_CMP_FLAGS_LOOSE) {
+        if ((a == MM_BEARER_ALLOWED_AUTH_UNKNOWN && b == MM_BEARER_ALLOWED_AUTH_NONE) ||
+            (b == MM_BEARER_ALLOWED_AUTH_UNKNOWN && a == MM_BEARER_ALLOWED_AUTH_NONE))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /**
  * mm_bearer_properties_cmp: (skip)
  */
 gboolean
-mm_bearer_properties_cmp (MMBearerProperties *a,
-                          MMBearerProperties *b)
+mm_bearer_properties_cmp (MMBearerProperties         *a,
+                          MMBearerProperties         *b,
+                          MMBearerPropertiesCmpFlags  flags)
 {
-    return ((!g_strcmp0 (a->priv->apn, b->priv->apn)) &&
-            (a->priv->ip_type == b->priv->ip_type) &&
-            (a->priv->allowed_auth == b->priv->allowed_auth) &&
-            (!g_strcmp0 (a->priv->user, b->priv->user)) &&
-            (!g_strcmp0 (a->priv->password, b->priv->password)) &&
-            (a->priv->allow_roaming == b->priv->allow_roaming) &&
-            (a->priv->allow_roaming_set == b->priv->allow_roaming_set) &&
-            (a->priv->rm_protocol == b->priv->rm_protocol));
+    if (!cmp_str (a->priv->apn, b->priv->apn, flags))
+        return FALSE;
+    if (!cmp_ip_type (a->priv->ip_type, b->priv->ip_type, flags))
+        return FALSE;
+    if (!cmp_allowed_auth (a->priv->allowed_auth, b->priv->allowed_auth, flags))
+        return FALSE;
+    if (!cmp_str (a->priv->user, b->priv->user, flags))
+        return FALSE;
+    if (!(flags & MM_BEARER_PROPERTIES_CMP_FLAGS_NO_PASSWORD) && !cmp_str (a->priv->password, b->priv->password, flags))
+        return FALSE;
+    if (!(flags & MM_BEARER_PROPERTIES_CMP_FLAGS_NO_ALLOW_ROAMING)) {
+        if (a->priv->allow_roaming != b->priv->allow_roaming)
+            return FALSE;
+        if (a->priv->allow_roaming_set != b->priv->allow_roaming_set)
+            return FALSE;
+    }
+    if (!(flags & MM_BEARER_PROPERTIES_CMP_FLAGS_NO_RM_PROTOCOL)) {
+        if (a->priv->rm_protocol != b->priv->rm_protocol)
+            return FALSE;
+    }
+    return TRUE;
 }
 
 /*****************************************************************************/

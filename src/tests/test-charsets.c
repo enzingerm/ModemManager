@@ -18,28 +18,29 @@
 #include <locale.h>
 
 #include "mm-modem-helpers.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 static void
 common_test_gsm7 (const gchar *in_utf8)
 {
-    guint32 unpacked_gsm_len = 0;
     guint32 packed_gsm_len = 0;
     guint32 unpacked_gsm_len_2 = 0;
-    g_autofree guint8 *unpacked_gsm = NULL;
+    g_autoptr(GByteArray) unpacked_gsm = NULL;
     g_autofree guint8 *packed_gsm = NULL;
-    g_autofree guint8 *unpacked_gsm_2 = NULL;
+    guint8 *unpacked_gsm_2 = NULL;
+    g_autoptr(GByteArray) unpacked_gsm_2_array = NULL;
     g_autofree gchar *built_utf8 = NULL;
+    g_autoptr(GError) error = NULL;
 
     /* Convert to GSM */
-    unpacked_gsm = mm_charset_utf8_to_unpacked_gsm (in_utf8, &unpacked_gsm_len);
+    unpacked_gsm = mm_modem_charset_bytearray_from_utf8 (in_utf8, MM_MODEM_CHARSET_GSM, FALSE, &error);
     g_assert_nonnull (unpacked_gsm);
-    g_assert_cmpuint (unpacked_gsm_len, >, 0);
+    g_assert_no_error (error);
 
     /* Pack */
-    packed_gsm = mm_charset_gsm_pack (unpacked_gsm, unpacked_gsm_len, 0, &packed_gsm_len);
+    packed_gsm = mm_charset_gsm_pack (unpacked_gsm->data, unpacked_gsm->len, 0, &packed_gsm_len);
     g_assert_nonnull (packed_gsm);
-    g_assert_cmpuint (packed_gsm_len, <=, unpacked_gsm_len);
+    g_assert_cmpuint (packed_gsm_len, <=, unpacked_gsm->len);
 
 #if 0
     {
@@ -56,10 +57,12 @@ common_test_gsm7 (const gchar *in_utf8)
     /* Unpack */
     unpacked_gsm_2 = mm_charset_gsm_unpack (packed_gsm, packed_gsm_len * 8 / 7, 0, &unpacked_gsm_len_2);
     g_assert_nonnull (unpacked_gsm_2);
+    unpacked_gsm_2_array = g_byte_array_new_take (unpacked_gsm_2, unpacked_gsm_len_2);
 
     /* And back to UTF-8 */
-    built_utf8 = (gchar *) mm_charset_gsm_unpacked_to_utf8 (unpacked_gsm_2, unpacked_gsm_len_2);
+    built_utf8 = mm_modem_charset_bytearray_to_utf8 (unpacked_gsm_2_array, MM_MODEM_CHARSET_GSM, FALSE, &error);
     g_assert_nonnull (built_utf8);
+    g_assert_no_error (error);
     g_assert_cmpstr (built_utf8, ==, in_utf8);
 }
 
@@ -314,38 +317,71 @@ test_gsm7_pack_7_chars_offset (void)
 }
 
 static void
-test_take_convert_ucs2_hex_utf8 (void)
+test_str_ucs2_to_from_utf8 (void)
 {
-    gchar *src, *converted;
+    const gchar       *src = "0054002D004D006F00620069006C0065";
+    g_autofree gchar  *utf8 = NULL;
+    g_autofree gchar  *dst = NULL;
+    g_autoptr(GError)  error = NULL;
 
-    /* Ensure hex-encoded UCS-2 works */
-    src = g_strdup ("0054002d004d006f00620069006c0065");
-    converted = mm_charset_take_and_convert_to_utf8 (src, MM_MODEM_CHARSET_UCS2);
-    g_assert_cmpstr (converted, ==, "T-Mobile");
-    g_free (converted);
+    utf8 = mm_modem_charset_str_to_utf8 (src, -1, MM_MODEM_CHARSET_UCS2, FALSE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (utf8, ==, "T-Mobile");
+
+    dst = mm_modem_charset_str_from_utf8 (utf8, MM_MODEM_CHARSET_UCS2, FALSE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (dst, ==, src);
 }
 
 static void
-test_take_convert_ucs2_bad_ascii (void)
+test_str_gsm_to_from_utf8 (void)
 {
-    gchar *src, *converted;
+    const gchar       *src = "T-Mobile";
+    g_autofree gchar  *utf8 = NULL;
+    g_autofree gchar  *dst = NULL;
+    g_autoptr(GError)  error = NULL;
 
-    /* Test that something mostly ASCII returns most of the original string */
-    src = g_strdup ("Orange\241");
-    converted = mm_charset_take_and_convert_to_utf8 (src, MM_MODEM_CHARSET_UCS2);
-    g_assert_cmpstr (converted, ==, "Orange");
-    g_free (converted);
+    /* Note: as long as the GSM string doesn't contain the '@' character, str_to_utf8()
+     * and str_from_utf8() can safely be used */
+
+    utf8 = mm_modem_charset_str_to_utf8 (src, -1, MM_MODEM_CHARSET_GSM, FALSE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (utf8, ==, src);
+
+    dst = mm_modem_charset_str_from_utf8 (utf8, MM_MODEM_CHARSET_GSM, FALSE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (dst, ==, src);
 }
 
 static void
-test_take_convert_ucs2_bad_ascii2 (void)
+test_str_gsm_to_from_utf8_with_at (void)
 {
-    gchar *src, *converted;
+    /* The NULs are '@' chars, except for the trailing one which is always taken as end-of-string */
+    const gchar        src[] = { 'T', '-', 'M', 0x00, 'o', 'b', 'i', 0x00, 'l', 'e', 0x00 };
+    const gchar       *utf8_expected = "T-M@obi@le";
+    const gchar       *src_translit = "T-M?obi?le";
+    g_autofree gchar  *utf8 = NULL;
+    g_autofree gchar  *dst = NULL;
+    g_autoptr(GError)  error = NULL;
 
-    /* Ensure something completely screwed up doesn't crash */
-    src = g_strdup ("\241\255\254\250\244\234");
-    converted = mm_charset_take_and_convert_to_utf8 (src, MM_MODEM_CHARSET_UCS2);
-    g_assert (converted == NULL);
+    /* Note: as long as the GSM string doesn't contain the '@' character, str_to_utf8()
+     * and str_from_utf8() can safely be used */
+
+    utf8 = mm_modem_charset_str_to_utf8 (src, G_N_ELEMENTS (src), MM_MODEM_CHARSET_GSM, FALSE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (utf8, ==, utf8_expected);
+
+    /* if charset conversion from UTF-8 contains '@' chars, running without transliteration
+     * will return an error */
+    dst = mm_modem_charset_str_from_utf8 (utf8, MM_MODEM_CHARSET_GSM, FALSE, &error);
+    g_assert_nonnull (error);
+    g_assert_null (dst);
+    g_clear_error (&error);
+
+    /* with transliteration, '@'->'?' */
+    dst = mm_modem_charset_str_from_utf8 (utf8, MM_MODEM_CHARSET_GSM, TRUE, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (dst, ==, src_translit);
 }
 
 struct charset_can_convert_to_test_s {
@@ -354,6 +390,7 @@ struct charset_can_convert_to_test_s {
     gboolean    to_ira;
     gboolean    to_8859_1;
     gboolean    to_ucs2;
+    gboolean    to_utf16;
     gboolean    to_pccp437;
     gboolean    to_pcdn;
 };
@@ -364,35 +401,35 @@ test_charset_can_covert_to (void)
     static const struct charset_can_convert_to_test_s charset_can_convert_to_test[] = {
         {
             .utf8 = "",
-            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
+            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
         },
         {
             .utf8 = " ",
-            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
+            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
         },
         {
             .utf8 = "some basic ascii",
-            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
+            .to_gsm = TRUE, .to_ira = TRUE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
         },
         {
             .utf8 = "ホモ・サピエンス 喂人类 katakana, chinese, english: UCS2 takes it all",
-            .to_gsm = FALSE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
+            .to_gsm = FALSE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
         },
         {
             .utf8 = "Some from the GSM7 basic set: a % Ψ Ω ñ ö è æ",
-            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
+            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
         },
         {
             .utf8 = "More from the GSM7 extended set: {} [] ~ € |",
-            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
+            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = FALSE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = FALSE, .to_pcdn = FALSE,
         },
         {
             .utf8 = "patín cannot be encoded in GSM7 or IRA, but is valid UCS2, ISO-8859-1, CP437 and CP850",
-            .to_gsm = FALSE, .to_ira = FALSE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
+            .to_gsm = FALSE, .to_ira = FALSE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
         },
         {
             .utf8 = "ècole can be encoded in multiple ways, but not in IRA",
-            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
+            .to_gsm = TRUE, .to_ira = FALSE, .to_8859_1 = TRUE, .to_ucs2 = TRUE, .to_utf16 = TRUE, .to_pccp437 = TRUE, .to_pcdn = TRUE,
         },
     };
     guint i;
@@ -403,29 +440,10 @@ test_charset_can_covert_to (void)
         g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_IRA)     == charset_can_convert_to_test[i].to_ira);
         g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_8859_1)  == charset_can_convert_to_test[i].to_8859_1);
         g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_UCS2)    == charset_can_convert_to_test[i].to_ucs2);
+        g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_UTF16)   == charset_can_convert_to_test[i].to_utf16);
         g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_PCCP437) == charset_can_convert_to_test[i].to_pccp437);
         g_assert (mm_charset_can_convert_to (charset_can_convert_to_test[i].utf8, MM_MODEM_CHARSET_PCDN)    == charset_can_convert_to_test[i].to_pcdn);
     }
-}
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
 }
 
 int main (int argc, char **argv)
@@ -447,9 +465,9 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/charsets/gsm7/pack/last-septet-alone", test_gsm7_pack_last_septet_alone);
     g_test_add_func ("/MM/charsets/gsm7/pack/7-chars-offset",    test_gsm7_pack_7_chars_offset);
 
-    g_test_add_func ("/MM/charsets/take-convert/ucs2/hex",         test_take_convert_ucs2_hex_utf8);
-    g_test_add_func ("/MM/charsets/take-convert/ucs2/bad-ascii",   test_take_convert_ucs2_bad_ascii);
-    g_test_add_func ("/MM/charsets/take-convert/ucs2/bad-ascii-2", test_take_convert_ucs2_bad_ascii2);
+    g_test_add_func ("/MM/charsets/str-from-to/ucs2",         test_str_ucs2_to_from_utf8);
+    g_test_add_func ("/MM/charsets/str-from-to/gsm",          test_str_gsm_to_from_utf8);
+    g_test_add_func ("/MM/charsets/str-from-to/gsm-with-at",  test_str_gsm_to_from_utf8_with_at);
 
     g_test_add_func ("/MM/charsets/can-convert-to", test_charset_can_covert_to);
 

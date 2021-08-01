@@ -1,56 +1,90 @@
-image: gcc
+include:
+  - project: freedesktop/ci-templates
+    ref: 290b79e0e78eab67a83766f4e9691be554fc4afd
+    file:
+    - templates/ubuntu.yml
 
 stages:
+  - container prep
   - build
 
-before_script:
-    - apt update || true
-    - apt -y install autoconf automake libtool libglib2.0-dev libgudev-1.0-dev libgettextpo-dev autopoint xsltproc dbus autoconf-archive gettext
+.common_variables:
+  variables:
+    FDO_UPSTREAM_REPO: mobile-broadband/ModemManager
+    FDO_DISTRIBUTION_VERSION: '20.04'
+    FDO_DISTRIBUTION_TAG: '2021-04-28.2'
+    FDO_DISTRIBUTION_PACKAGES: ca-certificates git gcc autoconf automake libtool
+                               libgettextpo-dev libgirepository1.0-dev libglib2.0-dev
+                               libgudev-1.0-dev python3-dbus python3-gi autopoint
+                               xsltproc dbus autoconf-archive gettext gtk-doc-tools
+                               libglib2.0-doc gobject-introspection libsystemd-dev
+                               libpolkit-gobject-1-dev valac
+
+build container:
+  extends:
+  - .fdo.container-build@ubuntu
+  - .common_variables
+  stage: container prep
+  only:
+    - master
+    - branches
+    - merge_requests
+    - tags
+    - pushes
 
 build-no-qmi:
   stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
   only:
     - master
     - merge_requests
     - tags
     - schedules
   script:
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
+    - git clone --depth 1 --branch mbim-1-24 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
     - pushd libmbim
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection
     - make
     - make install
     - popd
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/tmp/build-no-qmi --disable-gtk-doc --without-qmi
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --without-qmi
     - make
     - make check
     - make install
 
 build-no-mbim:
   stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
   only:
     - master
     - merge_requests
     - tags
     - schedules
   script:
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+    - git clone --depth 1 --branch qmi-1-28 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
     - pushd libqmi
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr --disable-mbim-qmux
+    - ./configure --prefix=/usr --disable-mbim-qmux --enable-collection=basic
     - make
     - make install
     - popd
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/tmp/build-no-mbim --disable-gtk-doc --without-mbim
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --without-mbim
     - make
     - make check
     - make install
 
 build-no-qmi-no-mbim:
   stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
   only:
     - master
     - merge_requests
@@ -58,44 +92,74 @@ build-no-qmi-no-mbim:
     - schedules
   script:
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/tmp/build-no-qmi-no-mbim --disable-gtk-doc --without-qmi --without-mbim
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --without-qmi --without-mbim
+    - make
+    - make check
+    - make install
+
+build-qmi-newest-commands:
+  stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
+  only:
+    - master
+    - merge_requests
+    - tags
+    - schedules
+  script:
+    - git clone --depth 1 --branch qmi-1-28 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+    - pushd libqmi
+    - NOCONFIGURE=1 ./autogen.sh
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --disable-mbim-qmux --enable-collection=basic
+    - make
+    - make install
+    - popd
+    - NOCONFIGURE=1 ./autogen.sh
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --without-mbim CFLAGS="-DWITH_NEWEST_QMI_COMMANDS"
     - make
     - make check
     - make install
 
 build-single-plugins:
   stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
   only:
     - schedules
   script:
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
+    - git clone --depth 1 --branch mbim-1-24 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
     - pushd libmbim
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr
+    - ./configure --prefix=/usr --disable-gtk-doc --disable-introspection
     - make
     - make install
     - popd
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+    - git clone --depth 1 --branch qmi-1-28 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
     - pushd libqmi
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr --enable-mbim-qmux
+    - ./configure --prefix=/usr --enable-mbim-qmux --enable-collection=basic
     - make
     - make install
     - popd
     - NOCONFIGURE=1 ./autogen.sh
-    - for plugin in generic altair-lte anydata cinterion dell dlink
-                    fibocom foxconn haier huawei iridium linktop
-                    longcheer mbm motorola mtk nokia nokia-icera
+    - for plugin in generic altair-lte anydata broadmobi cinterion
+                    dell dlink fibocom foxconn gosuncn haier huawei iridium
+                    linktop longcheer mbm motorola mtk nokia nokia-icera
                     novatel novatel-lte option option-hso pantech
-                    quectel samsung sierra-legacy sierra simtech
+                    qcom-soc quectel samsung sierra-legacy sierra simtech
                     telit thuraya tplink ublox via wavecom x22x zte; do
-        ./configure --prefix=/usr --disable-gtk-doc --disable-all-plugins --enable-plugin-$plugin;
+        ./configure --prefix=/usr --disable-gtk-doc --disable-introspection --disable-all-plugins --enable-plugin-$plugin;
         make;
         make clean;
       done
 
 build-default:
   stage: build
+  extends:
+  - .fdo.distribution-image@ubuntu
+  - .common_variables
   only:
     - master
     - branches
@@ -104,24 +168,30 @@ build-default:
     - schedules
     - pushes
   script:
-    - apt -y install gtk-doc-tools libglib2.0-doc gobject-introspection libgirepository1.0-dev libsystemd-dev libpolkit-gobject-1-dev valac
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
+    - git clone --depth 1 --branch mbim-1-24 https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
     - pushd libmbim
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr
+    - ./configure --prefix=/usr --disable-gtk-doc --enable-introspection
     - make
     - make install
     - popd
-    - git clone --depth 1 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+    - git clone --depth 1 --branch qmi-1-28 https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
     - pushd libqmi
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr --enable-mbim-qmux
+    - ./configure --prefix=/usr --enable-mbim-qmux --enable-collection=basic
     - make
     - make install
     - popd
     - NOCONFIGURE=1 ./autogen.sh
-    - ./configure --prefix=/usr --enable-gtk-doc --with-polkit=strict --with-suspend-resume=systemd --with-systemdsystemunitdir=/lib/systemd/system
+    - ./configure --prefix=/usr --enable-gtk-doc --enable-introspection --with-polkit=strict --with-suspend-resume=systemd --with-systemdsystemunitdir=/lib/systemd/system
     - make
     - make check
     - make install
     - make distcheck
+    - sha256sum $CI_PROJECT_NAME-*.tar.xz | awk '{print $1;}' > pkg_hash.txt
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - /builds/$CI_PROJECT_ROOT_NAMESPACE/$CI_PROJECT_NAME/$CI_PROJECT_NAME-*.tar.xz
+      - /builds/$CI_PROJECT_ROOT_NAMESPACE/$CI_PROJECT_NAME/pkg_hash.txt
+    expire_in: 2 days

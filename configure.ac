@@ -5,8 +5,8 @@ dnl Package and library versioning support
 dnl
 
 m4_define([mm_major_version], [1])
-m4_define([mm_minor_version], [13])
-m4_define([mm_micro_version], [0])
+m4_define([mm_minor_version], [16])
+m4_define([mm_micro_version], [8])
 m4_define([mm_version],
           [mm_major_version.mm_minor_version.mm_micro_version])
 
@@ -18,14 +18,17 @@ dnl        If the interface has grown (that is, the new library is compatible
 dnl            with old code), increment a.
 dnl        If the interface has changed in an incompatible way (that is,
 dnl            functions have changed or been removed), then zero a.
-m4_define([mm_glib_lt_current],  [5])
+m4_define([mm_glib_lt_current],  [7])
 m4_define([mm_glib_lt_revision], [0])
-m4_define([mm_glib_lt_age],      [5])
+m4_define([mm_glib_lt_age],      [7])
 
 dnl-----------------------------------------------------------------------------
 dnl autoconf, automake, libtool initialization
 dnl
-AC_INIT([ModemManager],[mm_version],[modemmanager-devel@lists.freedesktop.org],[ModemManager])
+AC_INIT([ModemManager],
+        [mm_version],
+        [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/issues],
+        [ModemManager])
 AM_INIT_AUTOMAKE([1.11.2 subdir-objects tar-ustar no-dist-gzip dist-xz -Wno-portability])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
@@ -159,6 +162,12 @@ AC_SUBST(GLIB_MKENUMS)
 GDBUS_CODEGEN=`$PKG_CONFIG --variable=gdbus_codegen gio-2.0`
 AC_SUBST(GDBUS_CODEGEN)
 
+dnl xsltproc required in git builds only
+AC_CHECK_PROG(XSLTPROC_CHECK,xsltproc,yes)
+if test "x$ax_is_release" != "xyes" -a "x$XSLTPROC_CHECK" != "xyes"; then
+   AC_MSG_ERROR([Please install xsltproc before configuring.])
+fi
+
 dnl-----------------------------------------------------------------------------
 dnl Testing support
 dnl
@@ -239,13 +248,14 @@ dnl
 
 PKG_CHECK_MODULES(LIBSYSTEMD, [libsystemd >= 209],[have_libsystemd=yes],[have_libsystemd=no])
 PKG_CHECK_MODULES(LIBSYSTEMD_LOGIN, [libsystemd-login >= 183],[have_libsystemd_login=yes],[have_libsystemd_login=no])
+PKG_CHECK_MODULES(LIBELOGIND, [libelogind >= 209], [have_elogind=yes], [have_elogind=no])
 AC_ARG_WITH(systemd-suspend-resume,
             AS_HELP_STRING([--with-systemd-suspend-resume=no|yes],
                            [Enable systemd suspend/resume support [[default=auto]]]),,
             [with_systemd_suspend_resume=auto])
 
 if test "x$with_systemd_suspend_resume" = "xauto"; then
-    if test "x$have_libsystemd" = "xyes" || test "x$have_libsystemd_login" = "xyes"; then
+    if test "x$have_libsystemd" = "xyes" || test "x$have_libsystemd_login" = "xyes" || test "x$have_elogind" = "xyes"; then
         with_systemd_suspend_resume=yes
     else
         with_systemd_suspend_resume=no
@@ -254,8 +264,8 @@ fi
 
 case $with_systemd_suspend_resume in
     yes)
-        if test "x$have_libsystemd" = "xno" && test "x$have_libsystemd_login" = "xno"; then
-		    AC_MSG_ERROR(libsystemd or libsystemd-login development headers are required)
+        if test "x$have_libsystemd" = "xno" && test "x$have_libsystemd_login" = "xno" && test "x$have_elogind" = "xno"; then
+		    AC_MSG_WARN(libsystemd, libsystemd-login or elogind must be available at runtime for suspend/resume support)
 	    fi
         AC_DEFINE(WITH_SYSTEMD_SUSPEND_RESUME, 1, [Define if you have systemd suspend-resume support])
         ;;
@@ -367,7 +377,7 @@ dnl-----------------------------------------------------------------------------
 dnl MBIM support (enabled by default)
 dnl
 
-LIBMBIM_VERSION=1.18.0
+LIBMBIM_VERSION=1.24.0
 
 AC_ARG_WITH(mbim, AS_HELP_STRING([--without-mbim], [Build without MBIM support]), [], [with_mbim=yes])
 AM_CONDITIONAL(WITH_MBIM, test "x$with_mbim" = "xyes")
@@ -391,7 +401,7 @@ dnl-----------------------------------------------------------------------------
 dnl QMI support (enabled by default)
 dnl
 
-LIBQMI_VERSION=1.25.1
+LIBQMI_VERSION=1.28.6
 
 AC_ARG_WITH(qmi, AS_HELP_STRING([--without-qmi], [Build without QMI support]), [], [with_qmi=yes])
 AM_CONDITIONAL(WITH_QMI, test "x$with_qmi" = "xyes")
@@ -448,6 +458,7 @@ MM_ENABLE_ALL_PLUGINS
 MM_ENABLE_PLUGIN([generic])
 MM_ENABLE_PLUGIN([altair-lte])
 MM_ENABLE_PLUGIN([anydata])
+MM_ENABLE_PLUGIN([broadmobi])
 MM_ENABLE_PLUGIN([cinterion])
 MM_ENABLE_PLUGIN([dell],
                  [with_shared_sierra,
@@ -460,6 +471,7 @@ MM_ENABLE_PLUGIN([fibocom],
                  [with_shared_xmm])
 MM_ENABLE_PLUGIN([foxconn],
                  [with_shared_foxconn])
+MM_ENABLE_PLUGIN([gosuncn])
 MM_ENABLE_PLUGIN([haier])
 MM_ENABLE_PLUGIN([huawei])
 MM_ENABLE_PLUGIN([iridium])
@@ -479,13 +491,15 @@ MM_ENABLE_PLUGIN([option],
 MM_ENABLE_PLUGIN([option-hso],
                  [with_shared_option])
 MM_ENABLE_PLUGIN([pantech])
+MM_ENABLE_PLUGIN_DISABLED([qcom-soc])
 MM_ENABLE_PLUGIN([quectel])
 MM_ENABLE_PLUGIN([samsung],
                  [with_shared_icera])
 MM_ENABLE_PLUGIN([sierra-legacy],
                  [with_shared_icera,
                   with_shared_sierra])
-MM_ENABLE_PLUGIN([sierra])
+MM_ENABLE_PLUGIN([sierra],
+                 [with_shared_xmm])
 MM_ENABLE_PLUGIN([simtech])
 MM_ENABLE_PLUGIN([telit],
                  [with_shared_telit])
@@ -528,6 +542,9 @@ src/Makefile
 src/tests/Makefile
 plugins/Makefile
 test/Makefile
+tools/Makefile
+tools/tests/Makefile
+tools/tests/services/org.freedesktop.ModemManager1.service
 introspection/Makefile
 introspection/tests/Makefile
 po/Makefile.in
@@ -593,11 +610,13 @@ echo "
       generic:                 ${enable_plugin_generic}
       altair lte:              ${enable_plugin_altair_lte}
       anydata:                 ${enable_plugin_anydata}
+      broadmobi:               ${enable_plugin_broadmobi}
       cinterion:               ${enable_plugin_cinterion}
       dell:                    ${enable_plugin_dell}
       dlink:                   ${enable_plugin_dlink}
       fibocom:                 ${enable_plugin_fibocom}
       foxconn:                 ${enable_plugin_foxconn}
+      gosuncn:                 ${enable_plugin_gosuncn}
       haier:                   ${enable_plugin_haier}
       huawei:                  ${enable_plugin_huawei}
       iridium:                 ${enable_plugin_iridium}
@@ -613,6 +632,7 @@ echo "
       option:                  ${enable_plugin_option}
       option hso:              ${enable_plugin_option_hso}
       pantech:                 ${enable_plugin_pantech}
+      qcom-soc:                ${enable_plugin_qcom_soc}
       quectel:                 ${enable_plugin_quectel}
       samsung:                 ${enable_plugin_samsung}
       sierra legacy:           ${enable_plugin_sierra_legacy}

@@ -36,8 +36,8 @@
  * @MM_MODEM_CAPABILITY_CDMA_EVDO: Modem supports at least one of CDMA 1xRTT, EVDO revision 0, EVDO revision A, or EVDO revision B.
  * @MM_MODEM_CAPABILITY_GSM_UMTS: Modem supports at least one of GSM, GPRS, EDGE, UMTS, HSDPA, HSUPA, or HSPA+ packet switched data capability.
  * @MM_MODEM_CAPABILITY_LTE: Modem has LTE data capability.
- * @MM_MODEM_CAPABILITY_LTE_ADVANCED: Modem has LTE Advanced data capability.
  * @MM_MODEM_CAPABILITY_IRIDIUM: Modem has Iridium capabilities.
+ * @MM_MODEM_CAPABILITY_5GNR: Modem has 5GNR capabilities. Since 1.14.
  * @MM_MODEM_CAPABILITY_ANY: Mask specifying all capabilities.
  *
  * Flags describing one or more of the general access technology families that a
@@ -51,8 +51,9 @@ typedef enum { /*< underscore_name=mm_modem_capability >*/
     MM_MODEM_CAPABILITY_CDMA_EVDO    = 1 << 1,
     MM_MODEM_CAPABILITY_GSM_UMTS     = 1 << 2,
     MM_MODEM_CAPABILITY_LTE          = 1 << 3,
-    MM_MODEM_CAPABILITY_LTE_ADVANCED = 1 << 4,
+    /* MM_MODEM_CAPABILITY_LTE_ADVANCED deprecated */
     MM_MODEM_CAPABILITY_IRIDIUM      = 1 << 5,
+    MM_MODEM_CAPABILITY_5GNR         = 1 << 6,
     MM_MODEM_CAPABILITY_ANY          = 0xFFFFFFFF
 } MMModemCapability;
 
@@ -208,6 +209,7 @@ typedef enum { /*< underscore_name=mm_modem_state_change_reason >*/
  * @MM_MODEM_ACCESS_TECHNOLOGY_EVDOA: CDMA2000 EVDO revision A.
  * @MM_MODEM_ACCESS_TECHNOLOGY_EVDOB: CDMA2000 EVDO revision B.
  * @MM_MODEM_ACCESS_TECHNOLOGY_LTE: LTE (ETSI 27.007: "E-UTRAN")
+ * @MM_MODEM_ACCESS_TECHNOLOGY_5GNR: 5GNR (ETSI 27.007: "NG-RAN"). Since 1.14.
  * @MM_MODEM_ACCESS_TECHNOLOGY_ANY: Mask specifying all access technologies.
  *
  * Describes various access technologies that a device uses when registered with
@@ -232,6 +234,7 @@ typedef enum { /*< underscore_name=mm_modem_access_technology >*/
     MM_MODEM_ACCESS_TECHNOLOGY_EVDOA       = 1 << 12,
     MM_MODEM_ACCESS_TECHNOLOGY_EVDOB       = 1 << 13,
     MM_MODEM_ACCESS_TECHNOLOGY_LTE         = 1 << 14,
+    MM_MODEM_ACCESS_TECHNOLOGY_5GNR        = 1 << 15,
     MM_MODEM_ACCESS_TECHNOLOGY_ANY         = 0xFFFFFFFF,
 } MMModemAccessTechnology;
 
@@ -242,6 +245,7 @@ typedef enum { /*< underscore_name=mm_modem_access_technology >*/
  * @MM_MODEM_MODE_2G: GPRS, EDGE.
  * @MM_MODEM_MODE_3G: UMTS, HSxPA.
  * @MM_MODEM_MODE_4G: LTE.
+ * @MM_MODEM_MODE_5G: 5GNR. Since 1.14.
  * @MM_MODEM_MODE_ANY: Any mode can be used (only this value allowed for POTS modems).
  *
  * Bitfield to indicate which access modes are supported, allowed or
@@ -255,6 +259,7 @@ typedef enum { /*< underscore_name=mm_modem_mode >*/
     MM_MODEM_MODE_2G   = 1 << 1,
     MM_MODEM_MODE_3G   = 1 << 2,
     MM_MODEM_MODE_4G   = 1 << 3,
+    MM_MODEM_MODE_5G   = 1 << 4,
     MM_MODEM_MODE_ANY  = 0xFFFFFFFF
 } MMModemMode;
 
@@ -533,6 +538,7 @@ typedef enum { /*< underscore_name=mm_modem_band >*/
  * @MM_MODEM_PORT_TYPE_QMI: QMI port.
  * @MM_MODEM_PORT_TYPE_MBIM: MBIM port.
  * @MM_MODEM_PORT_TYPE_AUDIO: Audio port. Since 1.12.
+ * @MM_MODEM_PORT_TYPE_IGNORED: Ignored port. Since 1.16.
  *
  * Type of modem port.
  *
@@ -547,6 +553,7 @@ typedef enum { /*< underscore_name=mm_modem_port_type >*/
     MM_MODEM_PORT_TYPE_QMI     = 6,
     MM_MODEM_PORT_TYPE_MBIM    = 7,
     MM_MODEM_PORT_TYPE_AUDIO   = 8,
+    MM_MODEM_PORT_TYPE_IGNORED = 9,
 } MMModemPortType;
 
 /**
@@ -1188,6 +1195,7 @@ typedef enum { /*< underscore_name=mm_modem_cdma_rm_protocol >*/
  * @MM_MODEM_3GPP_REGISTRATION_STATE_EMERGENCY_ONLY: Emergency services only. Since 1.8.
  * @MM_MODEM_3GPP_REGISTRATION_STATE_HOME_CSFB_NOT_PREFERRED: Registered for "CSFB not preferred", home network (applicable only when on LTE). Since 1.8.
  * @MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED: Registered for "CSFB not preferred", roaming network (applicable only when on LTE). Since 1.8.
+ * @MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS: Attached for access to Restricted Local Operator Services (applicable only when on LTE). Since 1.14.
  *
  * GSM registration code as defined in 3GPP TS 27.007.
  *
@@ -1205,6 +1213,7 @@ typedef enum { /*< underscore_name=mm_modem_3gpp_registration_state >*/
     MM_MODEM_3GPP_REGISTRATION_STATE_EMERGENCY_ONLY             = 8,
     MM_MODEM_3GPP_REGISTRATION_STATE_HOME_CSFB_NOT_PREFERRED    = 9,
     MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED = 10,
+    MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS              = 11,
 } MMModem3gppRegistrationState;
 
 /**

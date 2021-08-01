@@ -18,67 +18,94 @@
 
 #include <glib.h>
 
+/*****************************************************************************************/
+
 typedef enum {
-    MM_MODEM_CHARSET_UNKNOWN = 0x00000000,
-    MM_MODEM_CHARSET_GSM     = 0x00000001,
-    MM_MODEM_CHARSET_IRA     = 0x00000002,
-    MM_MODEM_CHARSET_8859_1  = 0x00000004,
-    MM_MODEM_CHARSET_UTF8    = 0x00000008,
-    MM_MODEM_CHARSET_UCS2    = 0x00000010,
-    MM_MODEM_CHARSET_PCCP437 = 0x00000020,
-    MM_MODEM_CHARSET_PCDN    = 0x00000040,
-    MM_MODEM_CHARSET_HEX     = 0x00000080
+    MM_MODEM_CHARSET_UNKNOWN = 0,
+    MM_MODEM_CHARSET_GSM     = 1 << 0,
+    MM_MODEM_CHARSET_IRA     = 1 << 1,
+    MM_MODEM_CHARSET_8859_1  = 1 << 2,
+    MM_MODEM_CHARSET_UTF8    = 1 << 3,
+    MM_MODEM_CHARSET_UCS2    = 1 << 4,
+    MM_MODEM_CHARSET_PCCP437 = 1 << 5,
+    MM_MODEM_CHARSET_PCDN    = 1 << 6,
+    MM_MODEM_CHARSET_UTF16   = 1 << 7,
 } MMModemCharset;
 
-const char *mm_modem_charset_to_string (MMModemCharset charset);
+const gchar    *mm_modem_charset_to_string   (MMModemCharset  charset);
+MMModemCharset  mm_modem_charset_from_string (const gchar    *string);
 
-MMModemCharset mm_modem_charset_from_string (const char *string);
-
-/* Append the given string to the given byte array but re-encode it
- * into the given charset first.  The original string is assumed to be
- * UTF-8 encoded.
- */
-gboolean mm_modem_charset_byte_array_append (GByteArray *array,
-                                             const char *utf8,
-                                             gboolean quoted,
-                                             MMModemCharset charset);
-
-/* Take a string encoded in the given charset in binary form, and
- * convert it to UTF-8. */
-gchar *mm_modem_charset_byte_array_to_utf8 (GByteArray     *array,
-                                            MMModemCharset  charset);
-
-/* Take a string in hex representation ("00430052" or "A4BE11" for example)
- * and convert it from the given character set to UTF-8.
- */
-char *mm_modem_charset_hex_to_utf8 (const char *src, MMModemCharset charset);
-
-/* Take a string in UTF-8 and convert it to the given charset in hex
- * representation.
- */
-char *mm_modem_charset_utf8_to_hex (const char *src, MMModemCharset charset);
-
-guint8 *mm_charset_utf8_to_unpacked_gsm (const char *utf8, guint32 *out_len);
-
-guint8 *mm_charset_gsm_unpacked_to_utf8 (const guint8 *gsm, guint32 len);
+/*****************************************************************************************/
 
 /* Checks whether conversion to the given charset may be done without errors */
-gboolean mm_charset_can_convert_to (const char *utf8,
-                                    MMModemCharset charset);
+gboolean mm_charset_can_convert_to (const gchar    *utf8,
+                                    MMModemCharset  charset);
 
 guint8 *mm_charset_gsm_unpack (const guint8 *gsm,
-                               guint32 num_septets,
-                               guint8 start_offset,  /* in bits */
-                               guint32 *out_unpacked_len);
+                               guint32       num_septets,
+                               guint8        start_offset,  /* in bits */
+                               guint32      *out_unpacked_len);
 
 guint8 *mm_charset_gsm_pack (const guint8 *src,
-                             guint32 src_len,
-                             guint8 start_offset,  /* in bits */
-                             guint32 *out_packed_len);
+                             guint32       src_len,
+                             guint8        start_offset,  /* in bits */
+                             guint32      *out_packed_len);
 
-gchar *mm_charset_take_and_convert_to_utf8 (gchar *str, MMModemCharset charset);
+/*****************************************************************************************/
 
-gchar *mm_utf8_take_and_convert_to_charset (gchar *str,
-                                            MMModemCharset charset);
+/*
+ * Convert the given UTF-8 encoded string into the given charset.
+ *
+ * The output is given as a bytearray, because the target charset may allow
+ * embedded NUL bytes (e.g. UTF-16).
+ *
+ * The output encoded string is not guaranteed to be NUL-terminated, instead
+ * the bytearray length itself gives the correct string length.
+ */
+GByteArray *mm_modem_charset_bytearray_from_utf8 (const gchar     *utf8,
+                                                  MMModemCharset   charset,
+                                                  gboolean         translit,
+                                                  GError         **error);
+
+/*
+ * Convert the given UTF-8 encoded string into the given charset.
+ *
+ * The output is given as a C string, and those charsets that allow
+ * embedded NUL bytes (e.g. UTF-16) will be hex-encoded.
+ *
+ * The output encoded string is guaranteed to be NUL-terminated, and so no
+ * explicit output length is returned.
+ */
+gchar *mm_modem_charset_str_from_utf8 (const gchar     *utf8,
+                                       MMModemCharset   charset,
+                                       gboolean         translit,
+                                       GError         **error);
+
+/*
+ * Convert into an UTF-8 encoded string the input byte array, which is
+ * encoded in the given charset.
+ *
+ * The output string is guaranteed to be valid UTF-8 and NUL-terminated.
+ */
+gchar *mm_modem_charset_bytearray_to_utf8 (GByteArray      *bytearray,
+                                           MMModemCharset   charset,
+                                           gboolean         translit,
+                                           GError         **error);
+
+/*
+ * Convert into an UTF-8 encoded string the input string, which is
+ * encoded in the given charset. Those charsets that allow embedded NUL
+ * bytes (e.g. UTF-16) need to be hex-encoded.
+ *
+ * If the input string is NUL-terminated, len may be given as -1; otherwise
+ * len needs to specify the number of valid bytes in the input string.
+ *
+ * The output string is guaranteed to be valid UTF-8 and NUL-terminated.
+ */
+gchar *mm_modem_charset_str_to_utf8 (const gchar     *str,
+                                     gssize           len,
+                                     MMModemCharset   charset,
+                                     gboolean         translit,
+                                     GError         **error);
 
 #endif /* MM_CHARSETS_H */

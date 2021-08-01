@@ -19,7 +19,6 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
 #include "mm-broadband-modem.h"
 #include "mm-plugin-haier.h"
 
@@ -55,7 +54,7 @@ mm_plugin_create (void)
     static const guint16 vendor_ids[] = { 0x201e, 0 };
 
     return MM_PLUGIN (g_object_new (MM_TYPE_PLUGIN_HAIER,
-                                    MM_PLUGIN_NAME,               "Haier",
+                                    MM_PLUGIN_NAME,               MM_MODULE_NAME,
                                     MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                                     MM_PLUGIN_ALLOWED_VENDOR_IDS, vendor_ids,
                                     MM_PLUGIN_ALLOWED_AT,         TRUE,

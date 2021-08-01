@@ -24,7 +24,7 @@
 #include <libmm-glib.h>
 
 #include "mm-sms-part-3gpp.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 /********************* PDU PARSER TESTS *********************/
 
@@ -41,7 +41,7 @@ common_test_part_from_hexpdu (const gchar *hexpdu,
     MMSmsPart *part;
     GError *error = NULL;
 
-    part = mm_sms_part_3gpp_new_from_pdu (0, hexpdu, &error);
+    part = mm_sms_part_3gpp_new_from_pdu (0, hexpdu, NULL, &error);
     g_assert_no_error (error);
     g_assert (part != NULL);
 
@@ -339,7 +339,7 @@ test_pdu_insufficient_data (void)
     };
 
     hexpdu = mm_utils_bin2hexstr (pdu, sizeof (pdu));
-    part = mm_sms_part_3gpp_new_from_pdu (0, hexpdu, &error);
+    part = mm_sms_part_3gpp_new_from_pdu (0, hexpdu, NULL, &error);
     g_assert (part == NULL);
     /* We don't care for the specific error type */
     g_assert (error != NULL);
@@ -531,7 +531,7 @@ common_test_create_pdu (const gchar *smsc,
         MMSmsEncoding encoding = MM_SMS_ENCODING_UNKNOWN;
 
         /* Detect best encoding */
-        out = mm_sms_part_3gpp_util_split_text (text, &encoding);
+        out = mm_sms_part_3gpp_util_split_text (text, &encoding, NULL);
         g_strfreev (out);
         mm_sms_part_set_text (part, text);
         mm_sms_part_set_encoding (part, encoding);
@@ -544,6 +544,7 @@ common_test_create_pdu (const gchar *smsc,
     pdu = mm_sms_part_3gpp_get_submit_pdu (part,
                                            &len,
                                            &msgstart,
+                                           NULL,
                                            &error);
     mm_sms_part_free (part);
 
@@ -552,8 +553,7 @@ common_test_create_pdu (const gchar *smsc,
 
     g_assert_no_error (error);
     g_assert (pdu != NULL);
-    g_assert_cmpuint (len, ==, expected_size);
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
+    g_assert_cmpmem (pdu, len, expected, expected_size);
     g_assert_cmpint (msgstart, ==, expected_msgstart);
 
     g_free (pdu);
@@ -719,7 +719,7 @@ common_test_text_split (const gchar *text,
     MMSmsEncoding out_encoding = MM_SMS_ENCODING_UNKNOWN;
     guint i;
 
-    out = mm_sms_part_3gpp_util_split_text (text, &out_encoding);
+    out = mm_sms_part_3gpp_util_split_text (text, &out_encoding, NULL);
 
     g_assert (out != NULL);
     g_assert (out_encoding != MM_SMS_ENCODING_UNKNOWN);
@@ -734,7 +734,7 @@ common_test_text_split (const gchar *text,
 }
 
 static void
-test_text_split_short (void)
+test_text_split_short_gsm7 (void)
 {
     const gchar *text = "Hello";
     const gchar *expected [] = {
@@ -748,7 +748,7 @@ test_text_split_short (void)
 static void
 test_text_split_short_ucs2 (void)
 {
-    const gchar *text = "你好";
+    const gchar *text = "你好"; /* (UTF-8) e4 bd a0 e5 a5 bd */
     const gchar *expected [] = {
         "你好",
         NULL
@@ -758,7 +758,19 @@ test_text_split_short_ucs2 (void)
 }
 
 static void
-test_text_split_max_single_pdu (void)
+test_text_split_short_utf16 (void)
+{
+    const gchar *text = "😉"; /* U+1F609, winking face */
+    const gchar *expected [] = {
+        "😉",
+        NULL
+    };
+
+    common_test_text_split (text, expected, MM_SMS_ENCODING_UCS2);
+}
+
+static void
+test_text_split_max_single_pdu_gsm7 (void)
 {
     const gchar *text =
         "0123456789012345678901234567890123456789"
@@ -797,7 +809,23 @@ test_text_split_max_single_pdu_ucs2 (void)
 }
 
 static void
-test_text_split_two_pdu (void)
+test_text_split_max_single_pdu_utf16 (void)
+{
+    /* NOTE: this string contains 35 Bhaiksuki characters, each of
+     * them requiring 4 bytes both in UTF-8 and in UTF-16 (140 bytes
+     * in total). */
+    const gchar *text =
+        "𑰀𑰁𑰂𑰃𑰄𑰅𑰆𑰇𑰈𑰊𑰋𑰌𑰍𑰎𑰏𑰐𑰑𑰒𑰓𑰔𑰕𑰖𑰗𑰘𑰙𑰚𑰛𑰜𑰝𑰞𑰟𑰠𑰡𑰢𑰣";
+    const gchar *expected [] = {
+        "𑰀𑰁𑰂𑰃𑰄𑰅𑰆𑰇𑰈𑰊𑰋𑰌𑰍𑰎𑰏𑰐𑰑𑰒𑰓𑰔𑰕𑰖𑰗𑰘𑰙𑰚𑰛𑰜𑰝𑰞𑰟𑰠𑰡𑰢𑰣",
+        NULL
+    };
+
+    common_test_text_split (text, expected, MM_SMS_ENCODING_UCS2);
+}
+
+static void
+test_text_split_two_pdu_gsm7 (void)
 {
     const gchar *text =
         "0123456789012345678901234567890123456789"
@@ -838,27 +866,31 @@ test_text_split_two_pdu_ucs2 (void)
     common_test_text_split (text, expected, MM_SMS_ENCODING_UCS2);
 }
 
-/************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
+static void
+test_text_split_two_pdu_utf16 (void)
 {
-    va_list args;
-    gchar *msg;
+    /* NOTE: this string contains 35 Bhaiksuki characters, each of
+     * them requiring 4 bytes both in UTF-8 and in UTF-16 (140 bytes
+     * in total) plus one ASCII char (encoded with 1 byte in UTF-8 and
+     * 2 bytes in UTF-16), making it a total of 142 bytes when in
+     * UTF-16 (so not fitting in one single PDU)
+     *
+     * When split in chunks, the last chunk will hold 2 Bhaiksuki
+     * characters plus the last ASCII one (9 bytes in UTF-16) so that
+     * the first chunk contains the leading 33 Bhaiksuki characters
+     * (132 characters, less than 134) */
+    const gchar *text =
+        "𑰀𑰁𑰂𑰃𑰄𑰅𑰆𑰇𑰈𑰊𑰋𑰌𑰍𑰎𑰏𑰐𑰑𑰒𑰓𑰔𑰕𑰖𑰗𑰘𑰙𑰚𑰛𑰜𑰝𑰞𑰟𑰠𑰡𑰢𑰣a";
+    const gchar *expected [] = {
+        "𑰀𑰁𑰂𑰃𑰄𑰅𑰆𑰇𑰈𑰊𑰋𑰌𑰍𑰎𑰏𑰐𑰑𑰒𑰓𑰔𑰕𑰖𑰗𑰘𑰙𑰚𑰛𑰜𑰝𑰞𑰟𑰠𑰡",
+        "𑰢𑰣a",
+        NULL
+    };
 
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
+    common_test_text_split (text, expected, MM_SMS_ENCODING_UCS2);
 }
+
+/************************************************************/
 
 int main (int argc, char **argv)
 {
@@ -893,12 +925,15 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/SMS/3GPP/PDU-Creator/GSM-3", test_create_pdu_gsm_3);
     g_test_add_func ("/MM/SMS/3GPP/PDU-Creator/GSM-no-validity", test_create_pdu_gsm_no_validity);
 
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/short", test_text_split_short);
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/short-UCS2", test_text_split_short_ucs2);
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/max-single-pdu", test_text_split_max_single_pdu);
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/max-single-pdu-UCS2", test_text_split_max_single_pdu_ucs2);
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/two-pdu", test_text_split_two_pdu);
-    g_test_add_func ("/MM/SMS/3GPP/Text-Split/two-pdu-UCS2", test_text_split_two_pdu_ucs2);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/gsm7/short",           test_text_split_short_gsm7);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/ucs2/short",           test_text_split_short_ucs2);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/utf16/short",          test_text_split_short_utf16);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/gsm7/max-single-pdu",  test_text_split_max_single_pdu_gsm7);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/ucs2/max-single-pdu",  test_text_split_max_single_pdu_ucs2);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/utf16/max-single-pdu", test_text_split_max_single_pdu_utf16);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/gsm7/two-pdu",         test_text_split_two_pdu_gsm7);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/ucs2/two-pdu",         test_text_split_two_pdu_ucs2);
+    g_test_add_func ("/MM/SMS/3GPP/Text-Split/utf16/two-pdu",        test_text_split_two_pdu_utf16);
 
     return g_test_run ();
 }

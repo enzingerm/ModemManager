@@ -44,6 +44,7 @@ struct _MMSimQmiClass {
 };
 
 GType mm_sim_qmi_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMSimQmi, g_object_unref)
 
 void       mm_sim_qmi_new        (MMBaseModem          *modem,
                                   gboolean              dms_uim_deprecated,
@@ -52,5 +53,16 @@ void       mm_sim_qmi_new        (MMBaseModem          *modem,
                                   gpointer              user_data);
 MMBaseSim *mm_sim_qmi_new_finish (GAsyncResult         *res,
                                   GError              **error);
+
+MMBaseSim *mm_sim_qmi_new_initialized (MMBaseModem *modem,
+                                       gboolean     dms_uim_deprecated,
+                                       guint        slot_number,
+                                       gboolean     active,
+                                       const gchar *sim_identifier,
+                                       const gchar *imsi,
+                                       const gchar *eid,
+                                       const gchar *operator_identifier,
+                                       const gchar *operator_name,
+                                       const GStrv  emergency_numbers);
 
 #endif /* MM_SIM_QMI_H */

@@ -29,10 +29,14 @@
 
 #include "mm-plugin-cinterion.h"
 #include "mm-broadband-modem-cinterion.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 #if defined WITH_QMI
 #include "mm-broadband-modem-qmi-cinterion.h"
+#endif
+
+#if defined WITH_MBIM
+#include "mm-broadband-modem-mbim.h"
 #endif
 
 G_DEFINE_TYPE (MMPluginCinterion, mm_plugin_cinterion, MM_TYPE_PLUGIN)
@@ -115,12 +119,23 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered Cinterion modem found...");
+        mm_obj_dbg (self, "QMI-powered Cinterion modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_cinterion_new (uid,
                                                                     drivers,
                                                                     mm_plugin_get_name (self),
                                                                     vendor,
                                                                     product));
+    }
+#endif
+
+#if defined WITH_MBIM
+    if (mm_port_probe_list_has_mbim_port (probes)) {
+        mm_obj_dbg (self, "MBIM-powered Cinterion modem found...");
+        return MM_BASE_MODEM (mm_broadband_modem_mbim_new (uid,
+                                                           drivers,
+                                                           mm_plugin_get_name (self),
+                                                           vendor,
+                                                           product));
     }
 #endif
 
@@ -143,14 +158,14 @@ grab_port (MMPlugin *self,
     ptype = mm_port_probe_get_port_type (probe);
 
     if (g_object_get_data (G_OBJECT (probe), TAG_CINTERION_APP_PORT)) {
-        mm_dbg ("(%s/%s)' Port flagged as primary",
-                mm_port_probe_get_port_subsys (probe),
-                mm_port_probe_get_port_name (probe));
+        mm_obj_dbg (self, "port '%s/%s' flagged as primary",
+                    mm_port_probe_get_port_subsys (probe),
+                    mm_port_probe_get_port_name (probe));
         pflags = MM_PORT_SERIAL_AT_FLAG_PRIMARY;
     } else if (g_object_get_data (G_OBJECT (probe), TAG_CINTERION_MODEM_PORT)) {
-        mm_dbg ("(%s/%s)' Port flagged as PPP",
-                mm_port_probe_get_port_subsys (probe),
-                mm_port_probe_get_port_name (probe));
+        mm_obj_dbg (self, "port '%s/%s' flagged as PPP",
+                    mm_port_probe_get_port_subsys (probe),
+                    mm_port_probe_get_port_name (probe));
         pflags = MM_PORT_SERIAL_AT_FLAG_PPP;
     }
 
@@ -166,7 +181,7 @@ grab_port (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     static const gchar *vendor_strings[] = { "cinterion", "siemens", NULL };
     static const guint16 vendor_ids[] = { 0x1e2d, 0x0681, 0 };
     static const MMAsyncMethod custom_init = {
@@ -176,12 +191,13 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_CINTERION,
-                      MM_PLUGIN_NAME,                   "Cinterion",
+                      MM_PLUGIN_NAME,                   MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,     subsystems,
                       MM_PLUGIN_ALLOWED_VENDOR_STRINGS, vendor_strings,
                       MM_PLUGIN_ALLOWED_VENDOR_IDS,     vendor_ids,
                       MM_PLUGIN_ALLOWED_AT,             TRUE,
                       MM_PLUGIN_ALLOWED_QMI,            TRUE,
+                      MM_PLUGIN_ALLOWED_MBIM,           TRUE,
                       MM_PLUGIN_CUSTOM_INIT,            &custom_init,
                       NULL));
 }

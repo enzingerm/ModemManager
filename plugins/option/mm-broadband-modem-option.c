@@ -25,7 +25,7 @@
 
 #include "ModemManager.h"
 #include "mm-modem-helpers.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-errors-types.h"
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-3gpp.h"
@@ -111,7 +111,7 @@ parent_load_supported_modes_ready (MMIfaceModem *self,
     g_array_append_val (combinations, mode);
 
     /* Filter out those unsupported modes */
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 
@@ -712,7 +712,6 @@ modem_3gpp_load_imei_finish (MMIfaceModem3gpp *self,
     if (comma)
         *comma = '\0';
 
-    mm_dbg ("loaded IMEI: %s", imei);
     return imei;
 }
 
@@ -721,7 +720,6 @@ modem_3gpp_load_imei (MMIfaceModem3gpp *self,
                       GAsyncReadyCallback callback,
                       gpointer user_data)
 {
-    mm_dbg ("loading (Option) IMEI...");
     mm_base_modem_at_command (MM_BASE_MODEM (self),
                               "+CGSN",
                               3,

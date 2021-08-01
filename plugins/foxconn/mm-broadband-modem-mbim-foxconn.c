@@ -26,13 +26,12 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
 #include "mm-errors-types.h"
 #include "mm-modem-helpers.h"
 #include "mm-base-modem-at.h"
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-location.h"
-#include "mm-broadband-modem-foxconn-t77w968.h"
+#include "mm-broadband-modem-mbim-foxconn.h"
 
 #if defined WITH_QMI
 # include "mm-iface-modem-firmware.h"
@@ -42,13 +41,15 @@
 static void iface_modem_location_init (MMIfaceModemLocation *iface);
 
 #if defined WITH_QMI
+static void iface_modem_init          (MMIfaceModem *iface);
 static void iface_modem_firmware_init (MMIfaceModemFirmware *iface);
 #endif
 
 static MMIfaceModemLocation *iface_modem_location_parent;
 
-G_DEFINE_TYPE_EXTENDED (MMBroadbandModemFoxconnT77w968, mm_broadband_modem_foxconn_t77w968, MM_TYPE_BROADBAND_MODEM_MBIM, 0,
+G_DEFINE_TYPE_EXTENDED (MMBroadbandModemMbimFoxconn, mm_broadband_modem_mbim_foxconn, MM_TYPE_BROADBAND_MODEM_MBIM, 0,
 #if defined WITH_QMI
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_FIRMWARE, iface_modem_firmware_init)
 #endif
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_LOCATION, iface_modem_location_init))
@@ -59,9 +60,65 @@ typedef enum {
     FEATURE_SUPPORTED
 } FeatureSupport;
 
-struct _MMBroadbandModemFoxconnT77w968Private {
+struct _MMBroadbandModemMbimFoxconnPrivate {
     FeatureSupport unmanaged_gps_support;
 };
+
+
+#if defined WITH_QMI
+
+/*****************************************************************************/
+/* FCC unlock (Modem interface) */
+
+static gboolean
+fcc_unlock_finish (MMIfaceModem  *self,
+                   GAsyncResult  *res,
+                   GError       **error)
+{
+    return g_task_propagate_boolean (G_TASK (res), error);
+}
+
+static void
+dms_foxconn_set_fcc_authentication_ready (QmiClientDms *client,
+                                          GAsyncResult *res,
+                                          GTask        *task)
+{
+    GError *error = NULL;
+    g_autoptr(QmiMessageDmsFoxconnSetFccAuthenticationOutput) output = NULL;
+
+    output = qmi_client_dms_foxconn_set_fcc_authentication_finish (client, res, &error);
+    if (!output || !qmi_message_dms_foxconn_set_fcc_authentication_output_get_result (output, &error))
+        g_task_return_error (task, error);
+    else
+        g_task_return_boolean (task, TRUE);
+    g_object_unref (task);
+}
+
+static void
+fcc_unlock (MMIfaceModem        *self,
+            GAsyncReadyCallback  callback,
+            gpointer             user_data)
+{
+    GTask     *task;
+    QmiClient *client = NULL;
+    g_autoptr(QmiMessageDmsFoxconnSetFccAuthenticationInput) input = NULL;
+
+    if (!mm_shared_qmi_ensure_client (MM_SHARED_QMI (self),
+                                      QMI_SERVICE_DMS, &client,
+                                      callback, user_data))
+        return;
+
+    task = g_task_new (self, NULL, callback, user_data);
+
+    input = qmi_message_dms_foxconn_set_fcc_authentication_input_new ();
+    qmi_message_dms_foxconn_set_fcc_authentication_input_set_value (input, 0x00, NULL);
+    qmi_client_dms_foxconn_set_fcc_authentication (QMI_CLIENT_DMS (client),
+                                                   input,
+                                                   5,
+                                                   NULL,
+                                                   (GAsyncReadyCallback)dms_foxconn_set_fcc_authentication_ready,
+                                                   task);
+}
 
 /*****************************************************************************/
 /* Firmware update settings
@@ -70,8 +127,6 @@ struct _MMBroadbandModemFoxconnT77w968Private {
  * because this is the only clean way to get the expected firmware version to
  * report.
  */
-
-#if defined WITH_QMI
 
 static MMFirmwareUpdateSettings *
 firmware_load_update_settings_finish (MMIfaceModemFirmware  *self,
@@ -132,16 +187,23 @@ firmware_load_update_settings (MMIfaceModemFirmware *self,
                                         NULL);
     if (!client) {
         g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
-                                 "Unable to load T77w968 version info: no QMI DMS client available");
+                                 "Unable to load version info: no QMI DMS client available");
         g_object_unref (task);
         return;
     }
 
     input = qmi_message_dms_foxconn_get_firmware_version_input_new ();
-    qmi_message_dms_foxconn_get_firmware_version_input_set_version_type (
-        input,
-        QMI_DMS_FOXCONN_FIRMWARE_VERSION_TYPE_FIRMWARE_MCFG,
-        NULL);
+    /* 0x105b is the T99W175 module, T99W175 needs to compare the apps version. */
+    if (mm_base_modem_get_vendor_id (MM_BASE_MODEM (self)) == 0x105b)
+        qmi_message_dms_foxconn_get_firmware_version_input_set_version_type (
+            input,
+            QMI_DMS_FOXCONN_FIRMWARE_VERSION_TYPE_FIRMWARE_MCFG_APPS,
+            NULL);
+    else
+        qmi_message_dms_foxconn_get_firmware_version_input_set_version_type (
+            input,
+            QMI_DMS_FOXCONN_FIRMWARE_VERSION_TYPE_FIRMWARE_MCFG,
+            NULL);
     qmi_client_dms_foxconn_get_firmware_version (
         QMI_CLIENT_DMS (client),
         input,
@@ -160,7 +222,7 @@ firmware_load_update_settings (MMIfaceModemFirmware *self,
 static MMModemLocationSource
 location_load_capabilities_finish (MMIfaceModemLocation  *self,
                                    GAsyncResult          *res,
-                                   GError              **error)
+                                   GError               **error)
 {
     GError *inner_error = NULL;
     gssize value;
@@ -171,6 +233,26 @@ location_load_capabilities_finish (MMIfaceModemLocation  *self,
         return MM_MODEM_LOCATION_SOURCE_NONE;
     }
     return (MMModemLocationSource)value;
+}
+
+static void
+custom_location_load_capabilities (GTask                 *task,
+                                   MMModemLocationSource  sources)
+{
+    MMBroadbandModemMbimFoxconn *self;
+
+    self = g_task_get_source_object (task);
+
+    /* If we have a GPS port and an AT port, enable unmanaged GPS support */
+    if (mm_base_modem_peek_port_primary (MM_BASE_MODEM (self)) &&
+        mm_base_modem_peek_port_gps (MM_BASE_MODEM (self))) {
+        self->priv->unmanaged_gps_support = FEATURE_SUPPORTED;
+        sources |= MM_MODEM_LOCATION_SOURCE_GPS_UNMANAGED;
+    }
+
+    /* So we're done, complete */
+    g_task_return_int (task, sources);
+    g_object_unref (task);
 }
 
 static void
@@ -188,16 +270,7 @@ parent_load_capabilities_ready (MMIfaceModemLocation *self,
         return;
     }
 
-    /* If we have a GPS port and an AT port, enable unmanaged GPS support */
-    if (mm_base_modem_peek_port_primary (MM_BASE_MODEM (self)) &&
-        mm_base_modem_peek_port_gps (MM_BASE_MODEM (self))) {
-        MM_BROADBAND_MODEM_FOXCONN_T77W968 (self)->priv->unmanaged_gps_support = FEATURE_SUPPORTED;
-        sources |= MM_MODEM_LOCATION_SOURCE_GPS_UNMANAGED;
-    }
-
-    /* So we're done, complete */
-    g_task_return_int (task, sources);
-    g_object_unref (task);
+    custom_location_load_capabilities (task, sources);
 }
 
 static void
@@ -209,10 +282,18 @@ location_load_capabilities (MMIfaceModemLocation *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    /* Chain up parent's setup */
-    iface_modem_location_parent->load_capabilities (self,
-                                                    (GAsyncReadyCallback)parent_load_capabilities_ready,
-                                                    task);
+    /* Chain up parent's setup, if any. If MM is built without QMI support,
+     * the MBIM modem won't have any location capabilities. */
+    if (iface_modem_location_parent &&
+        iface_modem_location_parent->load_capabilities &&
+        iface_modem_location_parent->load_capabilities_finish) {
+        iface_modem_location_parent->load_capabilities (self,
+                                                        (GAsyncReadyCallback)parent_load_capabilities_ready,
+                                                        task);
+        return;
+    }
+
+    custom_location_load_capabilities (task, MM_MODEM_LOCATION_SOURCE_NONE);
 }
 
 /*****************************************************************************/
@@ -249,10 +330,19 @@ parent_disable_location_gathering (GTask *task)
     self = MM_IFACE_MODEM_LOCATION (g_task_get_source_object (task));
     source = GPOINTER_TO_UINT (g_task_get_task_data (task));
 
-    iface_modem_location_parent->disable_location_gathering (self,
-							     source,
-							     (GAsyncReadyCallback)parent_disable_location_gathering_ready,
-							     task);
+    if (iface_modem_location_parent &&
+        iface_modem_location_parent->disable_location_gathering &&
+        iface_modem_location_parent->disable_location_gathering_finish) {
+        iface_modem_location_parent->disable_location_gathering (
+            self,
+            source,
+            (GAsyncReadyCallback)parent_disable_location_gathering_ready,
+            task);
+        return;
+    }
+
+    g_task_return_boolean (task, TRUE);
+    g_object_unref (task);
 }
 
 static void
@@ -277,8 +367,8 @@ disable_location_gathering (MMIfaceModemLocation  *_self,
                             GAsyncReadyCallback    callback,
                             gpointer               user_data)
 {
-    MMBroadbandModemFoxconnT77w968 *self = MM_BROADBAND_MODEM_FOXCONN_T77W968 (_self);
-    GTask                          *task;
+    MMBroadbandModemMbimFoxconn *self = MM_BROADBAND_MODEM_MBIM_FOXCONN (_self);
+    GTask                       *task;
 
     task = g_task_new (self, NULL, callback, user_data);
     g_task_set_task_data (task, GUINT_TO_POINTER (source), NULL);
@@ -324,22 +414,15 @@ unmanaged_gps_enabled_ready (MMBaseModem  *self,
 }
 
 static void
-parent_enable_location_gathering_ready (MMIfaceModemLocation *_self,
-                                        GAsyncResult         *res,
-                                        GTask                *task)
+custom_enable_location_gathering (GTask *task)
 {
-    MMBroadbandModemFoxconnT77w968 *self = MM_BROADBAND_MODEM_FOXCONN_T77W968 (_self);
-    GError                         *error = NULL;
-    MMModemLocationSource           source;
+    MMBroadbandModemMbimFoxconn *self;
+    MMModemLocationSource        source;
 
-    if (!iface_modem_location_parent->enable_location_gathering_finish (_self, res, &error)) {
-        g_task_return_error (task, error);
-        g_object_unref (task);
-        return;
-    }
+    self = g_task_get_source_object (task);
+    source = GPOINTER_TO_UINT (g_task_get_task_data (task));
 
     /* We only support Unmanaged GPS at this level */
-    source = GPOINTER_TO_UINT (g_task_get_task_data (task));
     if ((self->priv->unmanaged_gps_support != FEATURE_SUPPORTED) ||
         (source != MM_MODEM_LOCATION_SOURCE_GPS_UNMANAGED)) {
         g_task_return_boolean (task, TRUE);
@@ -347,12 +430,28 @@ parent_enable_location_gathering_ready (MMIfaceModemLocation *_self,
         return;
     }
 
-    mm_base_modem_at_command (MM_BASE_MODEM (_self),
+    mm_base_modem_at_command (MM_BASE_MODEM (self),
                               "^NV=30007,01,\"01\"",
                               3,
                               FALSE,
                               (GAsyncReadyCallback)unmanaged_gps_enabled_ready,
                               task);
+}
+
+static void
+parent_enable_location_gathering_ready (MMIfaceModemLocation *self,
+                                        GAsyncResult         *res,
+                                        GTask                *task)
+{
+    GError *error = NULL;
+
+    if (!iface_modem_location_parent->enable_location_gathering_finish (self, res, &error)) {
+        g_task_return_error (task, error);
+        g_object_unref (task);
+        return;
+    }
+
+    custom_enable_location_gathering (task);
 }
 
 static void
@@ -367,22 +466,30 @@ enable_location_gathering (MMIfaceModemLocation  *self,
     g_task_set_task_data (task, GUINT_TO_POINTER (source), NULL);
 
     /* Chain up parent's gathering enable */
-    iface_modem_location_parent->enable_location_gathering (self,
-                                                            source,
-                                                            (GAsyncReadyCallback)parent_enable_location_gathering_ready,
-                                                            task);
+    if (iface_modem_location_parent &&
+        iface_modem_location_parent->enable_location_gathering &&
+        iface_modem_location_parent->enable_location_gathering_finish) {
+        iface_modem_location_parent->enable_location_gathering (
+            self,
+            source,
+            (GAsyncReadyCallback)parent_enable_location_gathering_ready,
+            task);
+        return;
+    }
+
+    custom_enable_location_gathering (task);
 }
 
 /*****************************************************************************/
 
-MMBroadbandModemFoxconnT77w968 *
-mm_broadband_modem_foxconn_t77w968_new (const gchar  *device,
-                                        const gchar **drivers,
-                                        const gchar  *plugin,
-                                        guint16       vendor_id,
-                                        guint16       product_id)
+MMBroadbandModemMbimFoxconn *
+mm_broadband_modem_mbim_foxconn_new (const gchar  *device,
+                                     const gchar **drivers,
+                                     const gchar  *plugin,
+                                     guint16       vendor_id,
+                                     guint16       product_id)
 {
-    return g_object_new (MM_TYPE_BROADBAND_MODEM_FOXCONN_T77W968,
+    return g_object_new (MM_TYPE_BROADBAND_MODEM_MBIM_FOXCONN,
                          MM_BASE_MODEM_DEVICE,     device,
                          MM_BASE_MODEM_DRIVERS,    drivers,
                          MM_BASE_MODEM_PLUGIN,     plugin,
@@ -392,15 +499,15 @@ mm_broadband_modem_foxconn_t77w968_new (const gchar  *device,
                          MM_IFACE_MODEM_SIM_HOT_SWAP_CONFIGURED,             FALSE,
                          MM_IFACE_MODEM_PERIODIC_SIGNAL_CHECK_DISABLED,      TRUE,
                          MM_IFACE_MODEM_LOCATION_ALLOW_GPS_UNMANAGED_ALWAYS, TRUE,
-                         MM_IFACE_MODEM_CARRIER_CONFIG_MAPPING,              PKGDATADIR "/mm-foxconn-t77w968-carrier-mapping.conf",
+                         MM_IFACE_MODEM_CARRIER_CONFIG_MAPPING,              PKGDATADIR "/mm-foxconn-carrier-mapping.conf",
                          NULL);
 }
 
 static void
-mm_broadband_modem_foxconn_t77w968_init (MMBroadbandModemFoxconnT77w968 *self)
+mm_broadband_modem_mbim_foxconn_init (MMBroadbandModemMbimFoxconn *self)
 {
     /* Initialize private data */
-    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, MM_TYPE_BROADBAND_MODEM_FOXCONN_T77W968, MMBroadbandModemFoxconnT77w968Private);
+    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, MM_TYPE_BROADBAND_MODEM_MBIM_FOXCONN, MMBroadbandModemMbimFoxconnPrivate);
     self->priv->unmanaged_gps_support = FEATURE_SUPPORT_UNKNOWN;
 }
 
@@ -420,6 +527,13 @@ iface_modem_location_init (MMIfaceModemLocation *iface)
 #if defined WITH_QMI
 
 static void
+iface_modem_init (MMIfaceModem *iface)
+{
+    iface->fcc_unlock = fcc_unlock;
+    iface->fcc_unlock_finish = fcc_unlock_finish;
+}
+
+static void
 iface_modem_firmware_init (MMIfaceModemFirmware *iface)
 {
     iface->load_update_settings = firmware_load_update_settings;
@@ -429,9 +543,9 @@ iface_modem_firmware_init (MMIfaceModemFirmware *iface)
 #endif
 
 static void
-mm_broadband_modem_foxconn_t77w968_class_init (MMBroadbandModemFoxconnT77w968Class *klass)
+mm_broadband_modem_mbim_foxconn_class_init (MMBroadbandModemMbimFoxconnClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
-    g_type_class_add_private (object_class, sizeof (MMBroadbandModemFoxconnT77w968Private));
+    g_type_class_add_private (object_class, sizeof (MMBroadbandModemMbimFoxconnPrivate));
 }

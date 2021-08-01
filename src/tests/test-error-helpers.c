@@ -38,7 +38,7 @@
                                                                             \
           enum_value = g_enum_get_value (enum_class, i);                    \
           if (enum_value) {                                                 \
-              error = mm_## ERROR_SMALL ## _for_code ((MM##ERROR_CAMEL)i);  \
+              error = mm_## ERROR_SMALL ## _for_code ((MM##ERROR_CAMEL)i, NULL); \
               g_assert_error (error, MM_ ## ERROR_CAPS, i);                 \
               g_error_free (error);                                         \
           }                                                                 \
@@ -51,26 +51,6 @@ TEST_ERROR_HELPER (MOBILE_EQUIPMENT_ERROR, mobile_equipment_error, MobileEquipme
 TEST_ERROR_HELPER (MESSAGE_ERROR,          message_error,          MessageError)
 
 /*****************************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {

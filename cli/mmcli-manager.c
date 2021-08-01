@@ -108,7 +108,7 @@ mmcli_manager_get_option_group (void)
 
     /* Status options */
     group = g_option_group_new ("manager",
-                                "Manager options",
+                                "Manager options:",
                                 "Show manager options",
                                 NULL,
                                 NULL);
@@ -332,9 +332,14 @@ output_modem_info (MMObject    *obj,
     gchar       *extra;
     const gchar *manufacturer;
     const gchar *model;
+    MMModem     *modem;
 
-    manufacturer = mm_modem_get_manufacturer (mm_object_peek_modem (obj));
-    model = mm_modem_get_model (mm_object_peek_modem (obj));
+    modem = mm_object_peek_modem (obj);
+    if (!modem)
+        return;
+
+    manufacturer = mm_modem_get_manufacturer (modem);
+    model = mm_modem_get_model (modem);
     extra = g_strdup_printf ("[%s] %s",
                              manufacturer ? manufacturer : "manufacturer unknown",
                              model        ? model        : "model unknown");
@@ -444,7 +449,7 @@ get_manager_ready (GObject      *source,
 
 #if defined WITH_UDEV
     if (report_kernel_event_auto_scan) {
-        const gchar *subsys[] = { "tty", "usbmisc", "net", NULL };
+        const gchar *subsys[] = { "tty", "usbmisc", "net", "rpmsg", NULL };
         guint i;
 
         ctx->udev = g_udev_client_new (subsys);

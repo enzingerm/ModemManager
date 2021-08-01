@@ -79,12 +79,12 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
     /* initialize modem RPC */
     rpc = &self->priv->rpc;
     if(xmm7360_rpc_init(rpc) != 0) {
-        mm_err ("Failed to initialize XMM7360 RPC!");
+        mm_obj_err (self, "Failed to initialize XMM7360 RPC!");
         /* TODO: handle rpc initialization error */
         return;
     }
 
-    mm_dbg ("Initializing XMM7360 modem!");
+    mm_obj_dbg (self, "Initializing XMM7360 modem!");
     /* lots of synchronous calls, this has to be improved for sure */
     xmm7360_rpc_execute(rpc, UtaMsSmsInit, FALSE, NULL, NULL);
     xmm7360_rpc_execute(rpc, UtaMsCbsInit, FALSE, NULL, NULL);
@@ -110,7 +110,7 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
         xmm7360_rpc_pump(rpc, NULL);
     }
 
-    mm_dbg ("Successfully initialized XMM7360 modem!");
+    mm_obj_dbg (self, "Successfully initialized XMM7360 modem!");
 }
 
 static void

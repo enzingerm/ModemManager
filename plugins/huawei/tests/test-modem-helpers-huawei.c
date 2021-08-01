@@ -22,7 +22,8 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-test.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-huawei.h"
 
@@ -386,27 +387,21 @@ test_prefmode (void)
                 n_expected_combinations++;
         }
 
-        combinations = mm_huawei_parse_prefmode_test (prefmode_tests[i].str, &error);
+        combinations = mm_huawei_parse_prefmode_test (prefmode_tests[i].str, NULL, &error);
         g_assert_no_error (error);
         g_assert (combinations != NULL);
         g_assert_cmpuint (combinations->len, ==, n_expected_combinations);
 
         for (j = 0; j < combinations->len; j++) {
             MMHuaweiPrefmodeCombination *single;
-            gchar *allowed_str;
-            gchar *preferred_str;
+            g_autofree gchar *allowed_str = NULL;
+            g_autofree gchar *preferred_str = NULL;
 
             single = &g_array_index (combinations, MMHuaweiPrefmodeCombination, j);
             allowed_str = mm_modem_mode_build_string_from_mask (single->allowed);
             preferred_str = mm_modem_mode_build_string_from_mask (single->preferred);
-            mm_dbg ("Test[%u], Combination[%u]: %u, \"%s\", \"%s\"",
-                    i,
-                    j,
-                    single->prefmode,
-                    allowed_str,
-                    preferred_str);
-            g_free (allowed_str);
-            g_free (preferred_str);
+            mm_obj_dbg (NULL, "test[%u], combination[%u]: %u, \"%s\", \"%s\"",
+                        i, j, single->prefmode, allowed_str, preferred_str);
         }
 
         for (j = 0; j < combinations->len; j++) {
@@ -472,7 +467,7 @@ test_prefmode_response (void)
         const MMHuaweiPrefmodeCombination *found;
         GError *error = NULL;
 
-        combinations = mm_huawei_parse_prefmode_test (prefmode_response_tests[i].format, NULL);
+        combinations = mm_huawei_parse_prefmode_test (prefmode_response_tests[i].format, NULL, NULL);
         g_assert (combinations != NULL);
 
         found = mm_huawei_parse_prefmode_response (prefmode_response_tests[i].str,
@@ -622,28 +617,21 @@ test_syscfg (void)
                 n_expected_combinations++;
         }
 
-        combinations = mm_huawei_parse_syscfg_test (syscfg_tests[i].str, &error);
+        combinations = mm_huawei_parse_syscfg_test (syscfg_tests[i].str, NULL, &error);
         g_assert_no_error (error);
         g_assert (combinations != NULL);
         g_assert_cmpuint (combinations->len, ==, n_expected_combinations);
 
         for (j = 0; j < combinations->len; j++) {
             MMHuaweiSyscfgCombination *single;
-            gchar *allowed_str;
-            gchar *preferred_str;
+            g_autofree gchar *allowed_str = NULL;
+            g_autofree gchar *preferred_str = NULL;
 
             single = &g_array_index (combinations, MMHuaweiSyscfgCombination, j);
             allowed_str = mm_modem_mode_build_string_from_mask (single->allowed);
             preferred_str = mm_modem_mode_build_string_from_mask (single->preferred);
-            mm_dbg ("Test[%u], Combination[%u]: %u, %u, \"%s\", \"%s\"",
-                    i,
-                    j,
-                    single->mode,
-                    single->acqorder,
-                    allowed_str,
-                    preferred_str);
-            g_free (allowed_str);
-            g_free (preferred_str);
+            mm_obj_dbg (NULL, "test[%u], combination[%u]: %u, %u, \"%s\", \"%s\"",
+                        i, j, single->mode, single->acqorder, allowed_str, preferred_str);
         }
 
         for (j = 0; j < combinations->len; j++) {
@@ -736,7 +724,7 @@ test_syscfg_response (void)
         const MMHuaweiSyscfgCombination *found;
         GError *error = NULL;
 
-        combinations = mm_huawei_parse_syscfg_test (syscfg_response_tests[i].format, NULL);
+        combinations = mm_huawei_parse_syscfg_test (syscfg_response_tests[i].format, NULL, NULL);
         g_assert (combinations != NULL);
 
         found = mm_huawei_parse_syscfg_response (syscfg_response_tests[i].str,
@@ -896,20 +884,14 @@ test_syscfgex (void)
 
         for (j = 0; j < combinations->len; j++) {
             MMHuaweiSyscfgexCombination *single;
-            gchar *allowed_str;
-            gchar *preferred_str;
+            g_autofree gchar *allowed_str = NULL;
+            g_autofree gchar *preferred_str = NULL;
 
             single = &g_array_index (combinations, MMHuaweiSyscfgexCombination, j);
             allowed_str = mm_modem_mode_build_string_from_mask (single->allowed);
             preferred_str = mm_modem_mode_build_string_from_mask (single->preferred);
-            mm_dbg ("Test[%u], Combination[%u]: \"%s\", \"%s\", \"%s\"",
-                    i,
-                    j,
-                    single->mode_str,
-                    allowed_str,
-                    preferred_str);
-            g_free (allowed_str);
-            g_free (preferred_str);
+            mm_obj_dbg (NULL, "test[%u], combination[%u]: \"%s\", \"%s\", \"%s\"",
+                        i, j, single->mode_str, allowed_str, preferred_str);
         }
 
         for (j = 0; j < combinations->len; j++) {
@@ -1220,11 +1202,13 @@ typedef struct {
 } HcsqTest;
 
 static const HcsqTest hcsq_tests[] = {
-    { "^HCSQ:\"LTE\",30,19,66,0\r\n",  TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_LTE,     30, 19,  66, 0, 0 },
-    { "^HCSQ: \"WCDMA\",30,30,58\r\n", TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_UMTS,    30, 30,  58, 0, 0 },
-    { "^HCSQ: \"GSM\",36,255\r\n",     TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_GSM,     36, 255,  0, 0, 0 },
-    { "^HCSQ: \"NOSERVICE\"\r\n",      FALSE, MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN,  0,   0,  0, 0, 0 },
-    { NULL,                            FALSE, MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN,  0,   0,  0, 0, 0 }
+    { "^HCSQ:\"LTE\",30,19,66,0\r\n",  TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_LTE,     30, 19,   66,  0, 0 },
+    { "^HCSQ: \"WCDMA\",30,30,58\r\n", TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_UMTS,    30, 30,   58,  0, 0 },
+    { "^HCSQ: \"GSM\",36,255\r\n",     TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_GSM,     36, 255,   0,  0, 0 },
+    { "^HCSQ: LTE,33,40,135,11\r\n",   TRUE,  MM_MODEM_ACCESS_TECHNOLOGY_LTE,     33,  40, 135, 11, 0 },
+    { "^HCSQ: \"NOSERVICE\"\r\n",      FALSE, MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN,  0,   0,   0,  0, 0 },
+    { "^HCSQ: NOSERVICE\r\n",          FALSE, MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN,  0,   0,   0,  0, 0 },
+    { NULL,                            FALSE, MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN,  0,   0,   0,  0, 0 }
 };
 
 static void
@@ -1266,26 +1250,152 @@ test_hcsq (void)
 }
 
 /*****************************************************************************/
+/* Test ^GETPORTMODE response */
 
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
+typedef struct {
+    const gchar      *str;
+    guint             n_modes;
+    MMHuaweiPortMode  modes[8];
+} GetportmodeTest;
+
+static const GetportmodeTest getportmode_tests[] = {
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,PCUI:0,MDM:1",
+        2, { MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_MODEM }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,MDM:0,PCUI:1,NDIS:2,CDROM:3,SD:4,",
+        5, { MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_CDROM,
+             MM_HUAWEI_PORT_MODE_SD }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,MDM:0,PCUI:1,NDIS:2,GPS:3,BT:4,",
+        5, { MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_GPS,
+             MM_HUAWEI_PORT_MODE_BT
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,PCUI:0,MDM:1,NDIS:2,CDROM:3,SD:4,GPS:5,BT:6",
+        7, { MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_CDROM,
+             MM_HUAWEI_PORT_MODE_SD,
+             MM_HUAWEI_PORT_MODE_GPS,
+             MM_HUAWEI_PORT_MODE_BT
+        }
+    },
+    {
+        "^getportmode:type:WCDMA:Qualcomm,NDIS:0,DIAG:1,PCUI:2,MDM:3,SD:4",
+        5, { MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: ,pcui:1,modem:2,ncm:3,mass:4,mass_two:5,",
+        5, { MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_SD,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei ,, rndis: 0, pcui: 1, c_shell: 2, a_shell: 3,3g_diag: 4, gps: 5, 4g_diag: 6, mass_two: 7",
+        8, { MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_GPS,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,ecm:1,pcui:2,c_shell:3,a_shell:4,3g_diag:5,gps:6,4g_diag:7,mass:8,",
+        8, { MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_GPS,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,rndis:1,pcui:2,c_shell:3,a_shell:4,3g_diag:5,gps:6,4g_diag:7,mass:8,",
+        8, { MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_SHELL,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_GPS,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: huawei,,pcui:0,3g_modem:1,ncm:2,mass:3,mass_two:4",
+        5, { MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_SD,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE:TYPE:WCDMA:Qualcomm,MDM:0,NDIS:1,DIAG:2,PCUI:3,CDROM:4,SD:5",
+        6, { MM_HUAWEI_PORT_MODE_MODEM,
+             MM_HUAWEI_PORT_MODE_NET,
+             MM_HUAWEI_PORT_MODE_DIAG,
+             MM_HUAWEI_PORT_MODE_PCUI,
+             MM_HUAWEI_PORT_MODE_CDROM,
+             MM_HUAWEI_PORT_MODE_SD
+        }
+    },
+    {
+        "^GETPORTMODE: TYPE: WCDMA: Huawei Technologies Co.,Ltd.,",
+        0
+    },
+};
+
+static void
+test_getportmode (void)
 {
-    va_list args;
-    gchar *msg;
+    guint i;
 
-    if (!g_test_verbose ())
-        return;
+    for (i = 0; i < G_N_ELEMENTS (getportmode_tests); i++) {
+        g_autoptr(GArray) modes = NULL;
+        g_autoptr(GError) error = NULL;
 
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
+        mm_obj_dbg (NULL, "testing ^GETPORTMODE response: '%s'", getportmode_tests[i].str);
+
+        modes = mm_huawei_parse_getportmode_response (getportmode_tests[i].str, NULL, &error);
+        if (modes) {
+            guint j;
+
+            g_assert_no_error (error);
+            g_assert_cmpuint (modes->len, ==, getportmode_tests[i].n_modes);
+            for (j = 0; j < getportmode_tests[i].n_modes; j++)
+                g_assert_cmpuint (g_array_index (modes, MMHuaweiPortMode, j), ==, getportmode_tests[i].modes[j]);
+        } else
+            g_assert (error);
+    }
 }
+
+/*****************************************************************************/
 
 int main (int argc, char **argv)
 {
@@ -1306,6 +1416,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/huawei/nwtime", test_nwtime);
     g_test_add_func ("/MM/huawei/time", test_time);
     g_test_add_func ("/MM/huawei/hcsq", test_hcsq);
+    g_test_add_func ("/MM/huawei/getportmode", test_getportmode);
 
     return g_test_run ();
 }

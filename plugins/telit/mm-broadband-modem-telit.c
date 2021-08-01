@@ -24,7 +24,7 @@
 #include <ctype.h>
 
 #include "ModemManager.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-errors-types.h"
 #include "mm-modem-helpers.h"
 #include "mm-base-modem-at.h"
@@ -182,7 +182,7 @@ gps_enabled_ready (MMBaseModem *self,
 
     ctx = g_task_get_task_data (task);
     if (!mm_base_modem_at_command_finish (self, res, &error)) {
-        mm_warn ("telit: couldn't power up GNSS controller: '%s'", error->message);
+        g_prefix_error (&error, "couldn't power up GNSS controller: ");
         g_task_return_error (task, error);
         g_object_unref (task);
         return;
@@ -197,7 +197,9 @@ gps_enabled_ready (MMBaseModem *self,
                                   task);
         return;
     }
-    mm_info("telit: GNSS controller is powered up");
+
+    mm_obj_dbg (self, "GNSS controller is powered up");
+
     /* Only use the GPS port in NMEA/RAW setups */
     if (ctx->source & (MM_MODEM_LOCATION_SOURCE_GPS_NMEA |
                        MM_MODEM_LOCATION_SOURCE_GPS_RAW)) {
@@ -355,9 +357,9 @@ gpsp_test_ready (MMIfaceModemLocation *self,
     sources = GPOINTER_TO_UINT (g_task_get_task_data (task));
     mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (error) {
-        mm_dbg ("telit: GPS controller not supported: %s", error->message);
+        mm_obj_dbg (self, "GPS controller not supported: %s", error->message);
         g_clear_error (&error);
-    } else if (mm_base_modem_get_port_gps (MM_BASE_MODEM (self)))
+    } else if (mm_base_modem_peek_port_gps (MM_BASE_MODEM (self)))
         sources |= (MM_MODEM_LOCATION_SOURCE_GPS_NMEA |
                     MM_MODEM_LOCATION_SOURCE_GPS_RAW  |
                     MM_MODEM_LOCATION_SOURCE_GPS_UNMANAGED);
@@ -473,12 +475,12 @@ telit_qss_unsolicited_handler (MMPortSerialAt *port,
     if (self->priv->csim_lock_state >= CSIM_LOCK_STATE_LOCK_REQUESTED) {
 
         if (prev_qss_status > QSS_STATUS_SIM_REMOVED && cur_qss_status == QSS_STATUS_SIM_REMOVED) {
-            mm_dbg ("QSS handler: #QSS=0 after +CSIM=1 -> CSIM locked!");
+            mm_obj_dbg (self, "QSS handler: #QSS=0 after +CSIM=1: CSIM locked!");
             self->priv->csim_lock_state = CSIM_LOCK_STATE_LOCKED;
         }
 
         if (prev_qss_status == QSS_STATUS_SIM_REMOVED && cur_qss_status != QSS_STATUS_SIM_REMOVED) {
-            mm_dbg ("QSS handler: #QSS>=1 after +CSIM=0 -> CSIM unlocked!");
+            mm_obj_dbg (self, "QSS handler: #QSS>=1 after +CSIM=0: CSIM unlocked!");
             self->priv->csim_lock_state = CSIM_LOCK_STATE_UNLOCKED;
 
             if (self->priv->csim_lock_timeout_id) {
@@ -493,19 +495,19 @@ telit_qss_unsolicited_handler (MMPortSerialAt *port,
     }
 
     if (cur_qss_status != prev_qss_status)
-        mm_dbg ("QSS handler: status changed '%s -> %s'",
-                mm_telit_qss_status_get_string (prev_qss_status),
-                mm_telit_qss_status_get_string (cur_qss_status));
+        mm_obj_dbg (self, "QSS handler: status changed %s -> %s",
+                    mm_telit_qss_status_get_string (prev_qss_status),
+                    mm_telit_qss_status_get_string (cur_qss_status));
 
     if (self->priv->parse_qss == FALSE) {
-        mm_dbg ("QSS: message ignored");
+        mm_obj_dbg (self, "QSS handler: message ignored");
         return;
     }
 
     if ((prev_qss_status == QSS_STATUS_SIM_REMOVED && cur_qss_status != QSS_STATUS_SIM_REMOVED) ||
         (prev_qss_status > QSS_STATUS_SIM_REMOVED && cur_qss_status == QSS_STATUS_SIM_REMOVED)) {
-        mm_info ("QSS handler: SIM swap detected");
-        mm_broadband_modem_update_sim_hot_swap_detected (MM_BROADBAND_MODEM (self));
+        mm_obj_info (self, "QSS handler: SIM swap detected");
+        mm_broadband_modem_sim_hot_swap_detected (MM_BROADBAND_MODEM (self));
     }
 }
 
@@ -549,7 +551,7 @@ telit_qss_enable_ready (MMBaseModem *self,
         g_assert_not_reached ();
 
     if (!mm_base_modem_at_command_full_finish (self, res, error)) {
-        mm_warn ("QSS: error enabling unsolicited on port %s: %s", mm_port_get_device (MM_PORT (port)), (*error)->message);
+        mm_obj_warn (self, "QSS: error enabling unsolicited on port %s: %s", mm_port_get_device (MM_PORT (port)), (*error)->message);
         goto next_step;
     }
 
@@ -584,19 +586,19 @@ telit_qss_query_ready (MMBaseModem *_self,
 
     response = mm_base_modem_at_command_finish (_self, res, &error);
     if (error) {
-        mm_warn ("Could not get \"#QSS?\" reply: %s", error->message);
+        mm_obj_warn (self, "could not get \"#QSS?\" reply: %s", error->message);
         g_error_free (error);
         goto next_step;
     }
 
     qss_status = mm_telit_parse_qss_query (response, &error);
     if (error) {
-        mm_warn ("QSS query parse error: %s", error->message);
+        mm_obj_warn (self, "QSS query parse error: %s", error->message);
         g_error_free (error);
         goto next_step;
     }
 
-    mm_info ("QSS: current status is '%s'", mm_telit_qss_status_get_string (qss_status));
+    mm_obj_dbg (self, "QSS: current status is '%s'", mm_telit_qss_status_get_string (qss_status));
     self->priv->qss_status = qss_status;
 
 next_step:
@@ -754,7 +756,7 @@ csim_unlock_ready (MMBaseModem  *_self,
                              MM_MOBILE_EQUIPMENT_ERROR_NOT_SUPPORTED)) {
             self->priv->csim_lock_support = FEATURE_NOT_SUPPORTED;
         }
-        mm_warn ("Couldn't unlock SIM card: %s", error->message);
+        mm_obj_warn (self, "couldn't unlock SIM card: %s", error->message);
         g_error_free (error);
     }
 
@@ -776,7 +778,7 @@ parent_load_unlock_retries_ready (MMIfaceModem *self,
     ctx = g_task_get_task_data (task);
 
     if (!(ctx->retries = iface_modem_parent->load_unlock_retries_finish (self, res, &error))) {
-        mm_warn ("couldn't load unlock retries with generic logic: %s", error->message);
+        mm_obj_warn (self, "couldn't load unlock retries with generic logic: %s", error->message);
         g_error_free (error);
     }
 
@@ -803,7 +805,7 @@ csim_lock_ready (MMBaseModem  *_self,
                              MM_MOBILE_EQUIPMENT_ERROR,
                              MM_MOBILE_EQUIPMENT_ERROR_NOT_SUPPORTED)) {
             self->priv->csim_lock_support = FEATURE_NOT_SUPPORTED;
-            mm_warn ("Couldn't lock SIM card: %s. Continuing without CSIM lock.", error->message);
+            mm_obj_warn (self, "couldn't lock SIM card: %s; continuing without CSIM lock", error->message);
             g_error_free (error);
         } else {
             g_prefix_error (&error, "Couldn't lock SIM card: ");
@@ -853,8 +855,8 @@ handle_csim_locking (GTask    *task,
             }
             break;
         case FEATURE_NOT_SUPPORTED:
-            mm_dbg ("CSIM lock not supported by this modem. Skipping %s command",
-                    is_lock ? "lock" : "unlock");
+            mm_obj_dbg (self, "CSIM lock not supported by this modem; skipping %s command",
+                        is_lock ? "lock" : "unlock");
             ctx->step++;
             load_unlock_retries_step (task);
             break;
@@ -884,9 +886,8 @@ pending_csim_unlock_complete (MMBroadbandModemTelit *self)
 static gboolean
 csim_unlock_periodic_check (MMBroadbandModemTelit *self)
 {
-    if (self->priv->csim_lock_state != CSIM_LOCK_STATE_UNLOCKED) {
-        mm_warn ("CSIM is still locked after %d seconds. Trying to continue anyway", CSIM_UNLOCK_MAX_TIMEOUT);
-    }
+    if (self->priv->csim_lock_state != CSIM_LOCK_STATE_UNLOCKED)
+        mm_obj_warn (self, "CSIM is still locked after %d seconds; trying to continue anyway", CSIM_UNLOCK_MAX_TIMEOUT);
 
     self->priv->csim_lock_timeout_id = 0;
     pending_csim_unlock_complete (self);
@@ -922,7 +923,7 @@ load_unlock_retries_step (GTask *task)
         case LOAD_UNLOCK_RETRIES_STEP_LAST:
             self->priv->csim_lock_task = task;
             if (self->priv->csim_lock_state == CSIM_LOCK_STATE_LOCKED) {
-                mm_dbg ("CSIM is locked. Waiting for #QSS=1");
+                mm_obj_dbg (self, "CSIM is locked, waiting for #QSS=1");
                 self->priv->csim_lock_timeout_id = g_timeout_add_seconds (CSIM_UNLOCK_MAX_TIMEOUT,
                                                                           (GSourceFunc) csim_unlock_periodic_check,
                                                                           g_object_ref(self));
@@ -977,7 +978,7 @@ modem_after_power_up (MMIfaceModem *self,
 
     task = g_task_new (self, NULL, callback, user_data);
 
-    mm_dbg ("Stop ignoring #QSS");
+    mm_obj_dbg (self, "stop ignoring #QSS");
     modem->priv->parse_qss = TRUE;
 
     g_task_return_boolean (task, TRUE);
@@ -1003,12 +1004,12 @@ telit_modem_power_down_ready (MMBaseModem *self,
     GError *error = NULL;
 
     if (mm_base_modem_at_command_finish (self, res, &error)) {
-        mm_dbg ("Ignore #QSS unsolicited during power down/low");
+        mm_obj_dbg (self, "sgnore #QSS unsolicited during power down/low");
         MM_BROADBAND_MODEM_TELIT (self)->priv->parse_qss = FALSE;
     }
 
     if (error) {
-        mm_err ("modem power down: %s", error->message);
+        mm_obj_warn (self, "failed modem power down: %s", error->message);
         g_clear_error (&error);
     }
 
@@ -1079,23 +1080,30 @@ load_access_technologies_finish (MMIfaceModem *self,
     return TRUE;
 }
 
-static gboolean
-response_processor_psnt_ignore_at_errors (MMBaseModem *self,
-                                          gpointer none,
-                                          const gchar *command,
-                                          const gchar *response,
-                                          gboolean last_command,
-                                          const GError *error,
-                                          GVariant **result,
-                                          GError **result_error)
+static MMBaseModemAtResponseProcessorResult
+response_processor_psnt_ignore_at_errors (MMBaseModem   *self,
+                                          gpointer       none,
+                                          const gchar   *command,
+                                          const gchar   *response,
+                                          gboolean       last_command,
+                                          const GError  *error,
+                                          GVariant     **result,
+                                          GError       **result_error)
 {
-    const gchar *psnt, *mode;
+    const gchar *psnt;
+    const gchar *mode;
+
+    *result = NULL;
+    *result_error = NULL;
 
     if (error) {
         /* Ignore AT errors (ie, ERROR or CMx ERROR) */
-        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command)
+        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command) {
             *result_error = g_error_copy (error);
-        return FALSE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
+        }
+
+        return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_CONTINUE;
     }
 
     psnt = mm_strip_tag (response, "#PSNT:");
@@ -1104,26 +1112,26 @@ response_processor_psnt_ignore_at_errors (MMBaseModem *self,
         switch (atoi (++mode)) {
         case 0:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_GPRS);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 1:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_EDGE);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 2:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_UMTS);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 3:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_HSDPA);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 4:
             if (mm_iface_modem_is_3gpp_lte (MM_IFACE_MODEM (self)))
                 *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_LTE);
             else
                 *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 5:
             if (mm_iface_modem_is_3gpp_lte (MM_IFACE_MODEM (self))) {
                 *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN);
-                return TRUE;
+                return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
             }
             /* Fall-through since #PSNT: 5 is not supported in other than lte modems */
         default:
@@ -1136,26 +1144,32 @@ response_processor_psnt_ignore_at_errors (MMBaseModem *self,
                  MM_CORE_ERROR_FAILED,
                  "Failed to parse #PSNT response: '%s'",
                  response);
-    return FALSE;
+    return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
 }
 
-static gboolean
-response_processor_service_ignore_at_errors (MMBaseModem *self,
-                                             gpointer none,
-                                             const gchar *command,
-                                             const gchar *response,
-                                             gboolean last_command,
-                                             const GError *error,
-                                             GVariant **result,
-                                             GError **result_error)
+static MMBaseModemAtResponseProcessorResult
+response_processor_service_ignore_at_errors (MMBaseModem   *self,
+                                             gpointer       none,
+                                             const gchar   *command,
+                                             const gchar   *response,
+                                             gboolean       last_command,
+                                             const GError  *error,
+                                             GVariant     **result,
+                                             GError       **result_error)
 {
     const gchar *service;
 
+    *result = NULL;
+    *result_error = NULL;
+
     if (error) {
         /* Ignore AT errors (ie, ERROR or CMx ERROR) */
-        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command)
+        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command) {
             *result_error = g_error_copy (error);
-        return FALSE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
+        }
+
+        return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_CONTINUE;
     }
 
     service = mm_strip_tag (response, "+SERVICE:");
@@ -1163,13 +1177,13 @@ response_processor_service_ignore_at_errors (MMBaseModem *self,
         switch (atoi (service)) {
         case 1:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_1XRTT);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 2:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_EVDO0);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         case 3:
             *result = g_variant_new_uint32 (MM_MODEM_ACCESS_TECHNOLOGY_EVDOA);
-            return TRUE;
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
         default:
             break;
         }
@@ -1180,7 +1194,7 @@ response_processor_service_ignore_at_errors (MMBaseModem *self,
                  MM_CORE_ERROR_FAILED,
                  "Failed to parse +SERVICE response: '%s'",
                  response);
-    return FALSE;
+    return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
 }
 
 static const MMBaseModemAtCommand access_tech_commands[] = {
@@ -1194,7 +1208,6 @@ load_access_technologies (MMIfaceModem *self,
                           GAsyncReadyCallback callback,
                           gpointer user_data)
 {
-    mm_dbg ("loading access technology (Telit)...");
     mm_base_modem_at_sequence (
         MM_BASE_MODEM (self),
         access_tech_commands,
@@ -1241,7 +1254,7 @@ parent_load_supported_modes_ready (MMIfaceModem *self,
 
     /* Filter out those unsupported modes */
     combinations = mm_telit_build_modes_list();
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 
@@ -1280,7 +1293,7 @@ cind_set_ready (MMBaseModem  *self,
     GError *error = NULL;
 
     if (!mm_base_modem_at_command_finish (self, res, &error)) {
-        mm_warn ("Couldn't enable custom +CIND settings: %s", error->message);
+        mm_obj_warn (self, "couldn't enable custom +CIND settings: %s", error->message);
         g_error_free (error);
     }
 
@@ -1296,7 +1309,7 @@ parent_enable_unsolicited_events_ready (MMIfaceModem3gpp *self,
     GError *error = NULL;
 
     if (!iface_modem_3gpp_parent->enable_unsolicited_events_finish (self, res, &error)) {
-        mm_warn ("Couldn't enable parent 3GPP unsolicited events: %s", error->message);
+        mm_obj_warn (self, "couldn't enable parent 3GPP unsolicited events: %s", error->message);
         g_error_free (error);
     }
 

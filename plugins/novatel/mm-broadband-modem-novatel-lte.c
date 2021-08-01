@@ -31,7 +31,7 @@
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-3gpp.h"
 #include "mm-iface-modem-messaging.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-serial-parsers.h"
 
@@ -184,65 +184,76 @@ load_own_numbers_finish (MMIfaceModem *self,
     return own_numbers;
 }
 
-static gboolean
-response_processor_cnum_ignore_at_errors (MMBaseModem *self,
-                                          gpointer none,
-                                          const gchar *command,
-                                          const gchar *response,
-                                          gboolean last_command,
-                                          const GError *error,
-                                          GVariant **result,
-                                          GError **result_error)
+static MMBaseModemAtResponseProcessorResult
+response_processor_cnum_ignore_at_errors (MMBaseModem   *self,
+                                          gpointer       none,
+                                          const gchar   *command,
+                                          const gchar   *response,
+                                          gboolean       last_command,
+                                          const GError  *error,
+                                          GVariant     **result,
+                                          GError       **result_error)
 {
     GStrv own_numbers;
 
+    *result = NULL;
+    *result_error = NULL;
+
     if (error) {
         /* Ignore AT errors (ie, ERROR or CMx ERROR) */
-        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command)
+        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command) {
             *result_error = g_error_copy (error);
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
+        }
 
-        return FALSE;
+        return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_CONTINUE;
     }
 
     own_numbers = mm_3gpp_parse_cnum_exec_response (response);
     if (!own_numbers)
-        return FALSE;
+        return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_CONTINUE;
 
     *result = g_variant_new_strv ((const gchar *const *) own_numbers, -1);
     g_strfreev (own_numbers);
-    return TRUE;
+    return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
 }
 
-static gboolean
-response_processor_nwmdn_ignore_at_errors (MMBaseModem *self,
-                                           gpointer none,
-                                           const gchar *command,
-                                           const gchar *response,
-                                           gboolean last_command,
-                                           const GError *error,
-                                           GVariant **result,
-                                           GError **result_error)
+static MMBaseModemAtResponseProcessorResult
+response_processor_nwmdn_ignore_at_errors (MMBaseModem   *self,
+                                           gpointer       none,
+                                           const gchar   *command,
+                                           const gchar   *response,
+                                           gboolean       last_command,
+                                           const GError  *error,
+                                           GVariant     **result,
+                                           GError       **result_error)
 {
-    GArray *array;
-    GStrv own_numbers;
-    gchar *mdn;
+    g_auto(GStrv)  own_numbers = NULL;
+    GPtrArray     *array;
+    gchar         *mdn;
+
+    *result = NULL;
+    *result_error = NULL;
 
     if (error) {
         /* Ignore AT errors (ie, ERROR or CMx ERROR) */
-        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command)
+        if (error->domain != MM_MOBILE_EQUIPMENT_ERROR || last_command) {
             *result_error = g_error_copy (error);
+            return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_FAILURE;
+        }
 
-        return FALSE;
+        return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_CONTINUE;
     }
 
     mdn = g_strdup (mm_strip_tag (response, "$NWMDN:"));
-    array = g_array_new (TRUE, TRUE, sizeof (gchar *));
-    g_array_append_val (array, mdn);
-    own_numbers = (GStrv) g_array_free (array, FALSE);
+
+    array = g_ptr_array_new ();
+    g_ptr_array_add (array, mdn);
+    g_ptr_array_add (array, NULL);
+    own_numbers = (GStrv) g_ptr_array_free (array, FALSE);
 
     *result = g_variant_new_strv ((const gchar *const *) own_numbers, -1);
-    g_strfreev (own_numbers);
-    return TRUE;
+    return MM_BASE_MODEM_AT_RESPONSE_PROCESSOR_RESULT_SUCCESS;
 }
 
 static const MMBaseModemAtCommand own_numbers_commands[] = {
@@ -256,7 +267,6 @@ load_own_numbers (MMIfaceModem *self,
                   GAsyncReadyCallback callback,
                   gpointer user_data)
 {
-    mm_dbg ("loading (Novatel LTE) own numbers...");
     mm_base_modem_at_sequence (
         MM_BASE_MODEM (self),
         own_numbers_commands,
@@ -365,7 +375,6 @@ load_current_bands_done (MMIfaceModem *self,
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
-        mm_dbg ("Couldn't query supported bands: '%s'", error->message);
         g_task_return_error (task, error);
         g_object_unref (task);
         return;
@@ -424,7 +433,6 @@ load_unlock_retries_ready (MMBaseModem *self,
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
-        mm_dbg ("Couldn't query unlock retries: '%s'", error->message);
         g_task_return_error (task, error);
         g_object_unref (task);
         return;
@@ -499,7 +507,6 @@ load_access_technologies_ready (MMIfaceModem *self,
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
-        mm_dbg ("Couldn't query access technology: '%s'", error->message);
         g_task_return_error (task, error);
         g_object_unref (task);
         return;
@@ -598,7 +605,7 @@ scan_networks (MMIfaceModem3gpp *self,
     GTask *task;
     MMModemAccessTechnology access_tech;
 
-    mm_dbg ("scanning for networks (Novatel LTE)...");
+    mm_obj_dbg (self, "scanning for networks (Novatel LTE)...");
 
     task = g_task_new (self, NULL, callback, user_data);
 
@@ -608,17 +615,16 @@ scan_networks (MMIfaceModem3gpp *self,
      */
     access_tech = mm_iface_modem_get_access_technologies (MM_IFACE_MODEM (self));
     if (access_tech & MM_MODEM_ACCESS_TECHNOLOGY_LTE) {
-        gchar *access_tech_string;
+        g_autofree gchar *access_tech_string = NULL;
 
         access_tech_string = mm_modem_access_technology_build_string_from_mask (access_tech);
-        mm_warn ("Couldn't scan for networks with access technologies: %s", access_tech_string);
+        mm_obj_warn (self, "couldn't scan for networks with access technologies: %s", access_tech_string);
         g_task_return_new_error (task,
                                  MM_CORE_ERROR,
                                  MM_CORE_ERROR_UNSUPPORTED,
                                  "Couldn't scan for networks with access technologies: %s",
                                  access_tech_string);
         g_object_unref (task);
-        g_free (access_tech_string);
         return;
     }
 

@@ -26,7 +26,6 @@
 #include "mm-plugin-novatel-lte.h"
 #include "mm-private-boxed-types.h"
 #include "mm-broadband-modem-novatel-lte.h"
-#include "mm-log.h"
 
 G_DEFINE_TYPE (MMPluginNovatelLte, mm_plugin_novatel_lte, MM_TYPE_PLUGIN)
 
@@ -60,7 +59,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_NOVATEL_LTE,
-                      MM_PLUGIN_NAME,                "Novatel LTE",
+                      MM_PLUGIN_NAME,                MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,  subsystems,
                       MM_PLUGIN_ALLOWED_PRODUCT_IDS, products,
                       MM_PLUGIN_ALLOWED_SINGLE_AT,   TRUE,

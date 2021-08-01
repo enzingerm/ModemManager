@@ -15,6 +15,8 @@
     </subtitle>
     <releaseinfo>
       For libmm-glib version &version;
+      The latest version of this documentation can be found on-line at
+      <ulink role="online-location" url="https://www.freedesktop.org/software/ModemManager/doc/latest/libmm-glib/">https://www.freedesktop.org/software/ModemManager/doc/latest/libmm-glib/</ulink>.
     </releaseinfo>
 
     <authorgroup>
@@ -40,6 +42,7 @@
       <year>2018</year>
       <year>2019</year>
       <year>2020</year>
+      <year>2021</year>
       <holder>The ModemManager Authors</holder>
     </copyright>
 
@@ -286,6 +289,14 @@
   <chapter id="api-index-1-12" role="1.12">
     <title>Index of new symbols in 1.12</title>
     <xi:include href="xml/api-index-1.12.xml"></xi:include>
+  </chapter>
+  <chapter id="api-index-1-14" role="1.14">
+    <title>Index of new symbols in 1.14</title>
+    <xi:include href="xml/api-index-1.14.xml"></xi:include>
+  </chapter>
+  <chapter id="api-index-1-16" role="1.16">
+    <title>Index of new symbols in 1.16</title>
+    <xi:include href="xml/api-index-1.16.xml"></xi:include>
   </chapter>
 
   <xi:include href="xml/annotation-glossary.xml"></xi:include>

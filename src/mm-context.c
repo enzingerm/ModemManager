@@ -38,7 +38,7 @@
 static gboolean      help_flag;
 static gboolean      version_flag;
 static gboolean      debug;
-static MMFilterRule  filter_policy = MM_FILTER_POLICY_DEFAULT;
+static MMFilterRule  filter_policy = MM_FILTER_POLICY_STRICT;
 static gboolean      no_auto_scan = NO_AUTO_SCAN_DEFAULT;
 static const gchar  *initial_kernel_events;
 
@@ -48,8 +48,8 @@ filter_policy_option_arg (const gchar  *option_name,
                           gpointer      data,
                           GError      **error)
 {
-    if (!g_ascii_strcasecmp (value, "default")) {
-        filter_policy = MM_FILTER_POLICY_DEFAULT;
+    if (!g_ascii_strcasecmp (value, "legacy")) {
+        filter_policy = MM_FILTER_POLICY_LEGACY;
         return TRUE;
     }
 
@@ -77,7 +77,7 @@ filter_policy_option_arg (const gchar  *option_name,
 static const GOptionEntry entries[] = {
     {
         "filter-policy", 0, 0, G_OPTION_ARG_CALLBACK, filter_policy_option_arg,
-        "Filter policy: one of DEFAULT, WHITELIST-ONLY, STRICT, PARANOID",
+        "Filter policy: one of LEGACY, WHITELIST-ONLY, STRICT, PARANOID",
         "[POLICY]"
     },
     {
@@ -178,7 +178,7 @@ log_get_option_group (void)
     GOptionGroup *group;
 
     group = g_option_group_new ("log",
-                                "Logging options",
+                                "Logging options:",
                                 "Show logging options",
                                 NULL,
                                 NULL);
@@ -222,6 +222,12 @@ mm_context_get_log_relative_timestamps (void)
 static gboolean  test_session;
 static gboolean  test_enable;
 static gchar    *test_plugin_dir;
+#if defined WITH_UDEV
+static gboolean  test_no_udev;
+#endif
+#if defined WITH_SYSTEMD_SUSPEND_RESUME
+static gboolean  test_no_suspend_resume;
+#endif
 
 static const GOptionEntry test_entries[] = {
     {
@@ -239,6 +245,20 @@ static const GOptionEntry test_entries[] = {
         "Path to look for plugins",
         "[PATH]"
     },
+#if defined WITH_UDEV
+    {
+        "test-no-udev", 0, 0, G_OPTION_ARG_NONE, &test_no_udev,
+        "Run without udev support even if available",
+        NULL
+    },
+#endif
+#if defined WITH_SYSTEMD_SUSPEND_RESUME
+    {
+        "test-no-suspend-resume", 0, 0, G_OPTION_ARG_NONE, &test_no_suspend_resume,
+        "Disable suspend/resume support at runtime even if available",
+        NULL
+    },
+#endif
     { NULL }
 };
 
@@ -248,7 +268,7 @@ test_get_option_group (void)
     GOptionGroup *group;
 
     group = g_option_group_new ("test",
-                                "Test options",
+                                "Test options:",
                                 "Show Test options",
                                 NULL,
                                 NULL);
@@ -274,14 +294,29 @@ mm_context_get_test_plugin_dir (void)
     return test_plugin_dir ? test_plugin_dir : PLUGINDIR;
 }
 
+#if defined WITH_UDEV
+gboolean
+mm_context_get_test_no_udev (void)
+{
+    return test_no_udev;
+}
+#endif
+
+#if defined WITH_SYSTEMD_SUSPEND_RESUME
+gboolean
+mm_context_get_test_no_suspend_resume (void)
+{
+    return test_no_suspend_resume;
+}
+#endif
+
 /*****************************************************************************/
 
 static void
 print_version (void)
 {
-    g_print ("\n"
-             "ModemManager " MM_DIST_VERSION "\n"
-             "Copyright (C) 2008-2020 The ModemManager authors\n"
+    g_print ("ModemManager " MM_DIST_VERSION "\n"
+             "Copyright (C) 2008-2021 The ModemManager authors\n"
              "License GPLv2+: GNU GPL version 2 or later <http://gnu.org/licenses/gpl-2.0.html>\n"
              "This is free software: you are free to change and redistribute it.\n"
              "There is NO WARRANTY, to the extent permitted by law.\n"
@@ -346,5 +381,8 @@ mm_context_init (gint argc,
         g_warning ("error: --initial-kernel-events must be used only if --no-auto-scan is also used");
         exit (1);
     }
+    /* Force skipping autoscan if running test without udev */
+    if (test_no_udev)
+        no_auto_scan = TRUE;
 #endif
 }

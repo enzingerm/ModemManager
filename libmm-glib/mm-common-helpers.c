@@ -538,17 +538,6 @@ mm_common_build_capability_combinations_none (void)
     return g_variant_builder_end (&builder);
 }
 
-GVariant *
-mm_common_build_capability_combinations_any (void)
-{
-    GVariantBuilder builder;
-
-    g_variant_builder_init (&builder, G_VARIANT_TYPE ("au"));
-    g_variant_builder_add_value (&builder,
-                                 g_variant_new_uint32 (MM_MODEM_CAPABILITY_ANY));
-    return g_variant_builder_end (&builder);
-}
-
 void
 mm_common_get_bands_from_string (const gchar *str,
                                  MMModemBand **bands,
@@ -1331,15 +1320,23 @@ mm_get_int_from_str (const gchar *str,
                      gint *out)
 {
     glong num;
+    guint i;
     guint eol = 0;
 
-    if (!str || !str[0])
+    if (!str)
         return FALSE;
 
-    for (num = 0; str[num]; num++) {
-        if (str[num] != '+' && str[num] != '-' && !g_ascii_isdigit (str[num])) {
+    /* ignore all leading whitespaces */
+    while (str[0] == ' ')
+        str++;
+
+    if (!str[0])
+        return FALSE;
+
+    for (i = 0; str[i]; i++) {
+        if (str[i] != '+' && str[i] != '-' && !g_ascii_isdigit (str[i])) {
             /* ignore \r\n at the end of the string */
-            if ((str[num] == '\r') || (str[num] == '\n')) {
+            if ((str[i] == '\r') || (str[i] == '\n')) {
                 eol++;
                 continue;
             }
@@ -1350,7 +1347,7 @@ mm_get_int_from_str (const gchar *str,
             return FALSE;
     }
     /* if all characters were eol, the string is not parseable */
-    if (eol == num)
+    if (eol == i)
         return FALSE;
 
     errno = 0;
@@ -1367,17 +1364,10 @@ mm_get_int_from_match_info (GMatchInfo *match_info,
                             guint32 match_index,
                             gint *out)
 {
-    gchar *s;
-    gboolean ret;
+    g_autofree gchar *s = NULL;
 
-    s = g_match_info_fetch (match_info, match_index);
-    if (!s)
-        return FALSE;
-
-    ret = mm_get_int_from_str (s, out);
-    g_free (s);
-
-    return ret;
+    s = mm_get_string_unquoted_from_match_info (match_info, match_index);
+    return (s ? mm_get_int_from_str (s, out) : FALSE);
 }
 
 gboolean
@@ -1400,7 +1390,14 @@ mm_get_u64_from_str (const gchar *str,
     guint64 num;
     guint   eol = 0;
 
-    if (!str || !str[0])
+    if (!str)
+        return FALSE;
+
+    /* ignore all leading whitespaces */
+    while (str[0] == ' ')
+        str++;
+
+    if (!str[0])
         return FALSE;
 
     for (num = 0; str[num]; num++) {
@@ -1451,6 +1448,10 @@ mm_get_u64_from_hex_str (const gchar *str,
 
     if (!str)
         return FALSE;
+
+    /* ignore all leading whitespaces */
+    while (str[0] == ' ')
+        str++;
 
     if (g_str_has_prefix (str, "0x"))
         str = &str[2];
@@ -1503,17 +1504,35 @@ mm_get_u64_from_match_info (GMatchInfo *match_info,
                             guint32     match_index,
                             guint64    *out)
 {
-    gchar *s;
-    gboolean ret;
+    g_autofree gchar *s = NULL;
 
-    s = g_match_info_fetch (match_info, match_index);
-    if (!s)
+    s = mm_get_string_unquoted_from_match_info (match_info, match_index);
+    return (s ? mm_get_u64_from_str (s, out) : FALSE);
+}
+
+gboolean
+mm_get_uint_from_hex_match_info (GMatchInfo *match_info,
+                                 guint32     match_index,
+                                 guint      *out)
+{
+    guint64 num;
+
+    if (!mm_get_u64_from_hex_match_info (match_info, match_index, &num) || num > G_MAXUINT)
         return FALSE;
 
-    ret = mm_get_u64_from_str (s, out);
-    g_free (s);
+    *out = (guint)num;
+    return TRUE;
+}
 
-    return ret;
+gboolean
+mm_get_u64_from_hex_match_info (GMatchInfo *match_info,
+                                guint32     match_index,
+                                guint64    *out)
+{
+    g_autofree gchar *s = NULL;
+
+    s = mm_get_string_unquoted_from_match_info (match_info, match_index);
+    return (s ? mm_get_u64_from_hex_str (s, out) : FALSE);
 }
 
 gboolean
@@ -1547,7 +1566,7 @@ mm_get_double_from_str (const gchar *str,
         return FALSE;
 
     errno = 0;
-    num = strtod (str, NULL);
+    num = g_ascii_strtod (str, NULL);
     if (!errno) {
         *out = num;
         return TRUE;
@@ -1560,17 +1579,10 @@ mm_get_double_from_match_info (GMatchInfo *match_info,
                                guint32 match_index,
                                gdouble *out)
 {
-    gchar *s;
-    gboolean ret;
+    g_autofree gchar *s = NULL;
 
-    s = g_match_info_fetch (match_info, match_index);
-    if (!s)
-        return FALSE;
-
-    ret = mm_get_double_from_str (s, out);
-    g_free (s);
-
-    return ret;
+    s = mm_get_string_unquoted_from_match_info (match_info, match_index);
+    return (s ? mm_get_double_from_str (s, out) : FALSE);
 }
 
 gchar *
@@ -1675,33 +1687,48 @@ mm_utils_hex2byte (const gchar *hex)
     return (a << 4) | b;
 }
 
-gchar *
-mm_utils_hexstr2bin (const gchar *hex, gsize *out_len)
+guint8 *
+mm_utils_hexstr2bin (const gchar  *hex,
+                     gssize        len,
+                     gsize        *out_len,
+                     GError      **error)
 {
     const gchar *ipos = hex;
-    gchar *buf = NULL;
-    gsize i;
+    g_autofree guint8 *buf = NULL;
+    gssize i;
     gint a;
-    gchar *opos;
-    gsize len;
+    guint8 *opos;
 
-    len = strlen (hex);
+    if (len < 0)
+        len = strlen (hex);
+
+    if (len == 0) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "Hex conversion failed: empty string");
+        return NULL;
+    }
 
     /* Length must be a multiple of 2 */
-    g_return_val_if_fail ((len % 2) == 0, NULL);
+    if ((len % 2) != 0) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "Hex conversion failed: invalid input length");
+        return NULL;
+    }
 
-    opos = buf = g_malloc0 ((len / 2) + 1);
+    opos = buf = g_malloc0 (len / 2);
     for (i = 0; i < len; i += 2) {
         a = mm_utils_hex2byte (ipos);
         if (a < 0) {
-            g_free (buf);
+            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                         "Hex byte conversion from '%c%c' failed",
+                         ipos[0], ipos[1]);
             return NULL;
         }
-        *opos++ = a;
+        *opos++ = (guint8)a;
         ipos += 2;
     }
     *out_len = len / 2;
-    return buf;
+    return g_steal_pointer (&buf);
 }
 
 /* End from hostap */
@@ -1712,9 +1739,9 @@ mm_utils_ishexstr (const gchar *hex)
     gsize len;
     gsize i;
 
-    /* Length not multiple of 2? */
+    /* Empty string or length not multiple of 2? */
     len = strlen (hex);
-    if (len % 2 != 0)
+    if (len == 0 || (len % 2) != 0)
         return FALSE;
 
     for (i = 0; i < len; i++) {

@@ -23,7 +23,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 /************************************************************/
 
@@ -56,33 +56,13 @@ test_dummy (void)
 
 #if defined ENABLE_PLUGIN_FOXCONN
 static void
-test_foxconn_t77w968 (void)
+test_foxconn (void)
 {
-    common_test (TESTKEYFILE_FOXCONN_T77W968);
+    common_test (TESTKEYFILE_FOXCONN);
 }
 #endif
 
 /************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
-{
-    va_list args;
-    gchar *msg;
-
-    if (!g_test_verbose ())
-        return;
-
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
-}
 
 int main (int argc, char **argv)
 {
@@ -92,7 +72,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/test-keyfiles/dummy", test_dummy);
 
 #if defined ENABLE_PLUGIN_FOXCONN
-    g_test_add_func ("/MM/test-keyfiles/foxconn/t77w968", test_foxconn_t77w968);
+    g_test_add_func ("/MM/test-keyfiles/foxconn", test_foxconn);
 #endif
 
     return g_test_run ();

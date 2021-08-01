@@ -23,7 +23,7 @@
 #include <libmm-glib.h>
 
 #include "mm-sms-part-cdma.h"
-#include "mm-log.h"
+#include "mm-log-test.h"
 
 /********************* PDU PARSER TESTS *********************/
 
@@ -38,8 +38,7 @@ common_test_part_from_hexpdu (const gchar *hexpdu,
     MMSmsPart *part;
     GError *error = NULL;
 
-    mm_dbg (" ");
-    part = mm_sms_part_cdma_new_from_pdu (0, hexpdu, &error);
+    part = mm_sms_part_cdma_new_from_pdu (0, hexpdu, NULL, &error);
     g_assert_no_error (error);
     g_assert (part != NULL);
 
@@ -88,8 +87,7 @@ common_test_invalid_part_from_hexpdu (const gchar *hexpdu)
     MMSmsPart *part;
     GError *error = NULL;
 
-    mm_dbg (" ");
-    part = mm_sms_part_cdma_new_from_pdu (0, hexpdu, &error);
+    part = mm_sms_part_cdma_new_from_pdu (0, hexpdu, NULL, &error);
     g_assert (part == NULL);
     /* We don't care for the specific error type */
     g_assert (error != NULL);
@@ -396,7 +394,7 @@ common_test_create_pdu (MMSmsCdmaTeleserviceId teleservice_id,
         mm_sms_part_take_data (part, data_bytearray);
     }
 
-    pdu = mm_sms_part_cdma_get_submit_pdu (part, &len, &error);
+    pdu = mm_sms_part_cdma_get_submit_pdu (part, &len, NULL, &error);
     mm_sms_part_free (part);
 
     if (g_test_verbose ())
@@ -502,27 +500,45 @@ test_create_pdu_text_unicode_encoding (void)
                             expected, sizeof (expected));
 }
 
-/************************************************************/
-
-void
-_mm_log (const char *loc,
-         const char *func,
-         guint32 level,
-         const char *fmt,
-         ...)
+static void
+test_create_parse_pdu_text_ascii_encoding (void)
 {
-    va_list args;
-    gchar *msg;
+#define MAX_TEXT_LEN 100
+    guint i;
+    gchar text[MAX_TEXT_LEN + 1];
 
-    if (!g_test_verbose ())
-        return;
+    memset (text, 0, sizeof (text));
 
-    va_start (args, fmt);
-    msg = g_strdup_vprintf (fmt, args);
-    va_end (args);
-    g_print ("%s\n", msg);
-    g_free (msg);
+    for (i = 0; i < MAX_TEXT_LEN; i++) {
+        MMSmsPart *part;
+        guint8 *pdu;
+        guint len = 0;
+        GError *error = NULL;
+
+        text[i]='A';
+
+        part = mm_sms_part_new (0, MM_SMS_PDU_TYPE_CDMA_SUBMIT);
+        mm_sms_part_set_cdma_teleservice_id (part, MM_SMS_CDMA_TELESERVICE_ID_WMT);
+        mm_sms_part_set_number (part, "123456789");
+        mm_sms_part_set_text (part, text);
+        pdu = mm_sms_part_cdma_get_submit_pdu (part, &len, NULL, &error);
+        g_assert_no_error (error);
+        g_assert (pdu != NULL);
+        mm_sms_part_free (part);
+
+        part = mm_sms_part_cdma_new_from_binary_pdu (0, pdu, len, NULL, &error);
+        g_assert_no_error (error);
+        g_assert (part != NULL);
+        g_assert_cmpuint (MM_SMS_CDMA_TELESERVICE_ID_WMT, ==, mm_sms_part_get_cdma_teleservice_id (part));
+        g_assert_cmpstr ("123456789", ==, mm_sms_part_get_number (part));
+        g_assert_cmpstr (text, ==, mm_sms_part_get_text (part));
+        mm_sms_part_free (part);
+
+        g_free (pdu);
+    }
 }
+
+/************************************************************/
 
 int main (int argc, char **argv)
 {
@@ -541,6 +557,8 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/SMS/CDMA/PDU-Creator/ascii-encoding", test_create_pdu_text_ascii_encoding);
     g_test_add_func ("/MM/SMS/CDMA/PDU-Creator/latin-encoding", test_create_pdu_text_latin_encoding);
     g_test_add_func ("/MM/SMS/CDMA/PDU-Creator/unicode-encoding", test_create_pdu_text_unicode_encoding);
+
+    g_test_add_func ("/MM/SMS/CDMA/PDU-Creator-Parser/ascii-encoding", test_create_parse_pdu_text_ascii_encoding);
 
     return g_test_run ();
 }

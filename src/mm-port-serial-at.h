@@ -42,20 +42,24 @@ typedef struct _MMPortSerialAtPrivate MMPortSerialAtPrivate;
  *    only when connecting is port 0 opened for dialing (ATD) and PPP
  */
 typedef enum { /*< underscore_name=mm_port_serial_at_flag >*/
-    MM_PORT_SERIAL_AT_FLAG_NONE        = 0,
+    MM_PORT_SERIAL_AT_FLAG_NONE            = 0,
     /* This port is preferred for command and status */
-    MM_PORT_SERIAL_AT_FLAG_PRIMARY     = 1 << 0,
+    MM_PORT_SERIAL_AT_FLAG_PRIMARY         = 1 << 0,
     /* Use port for command and status if the primary port is connected */
-    MM_PORT_SERIAL_AT_FLAG_SECONDARY   = 1 << 1,
+    MM_PORT_SERIAL_AT_FLAG_SECONDARY       = 1 << 1,
     /* This port should be used for PPP */
-    MM_PORT_SERIAL_AT_FLAG_PPP         = 1 << 2,
+    MM_PORT_SERIAL_AT_FLAG_PPP             = 1 << 2,
     /* This port should be used for GPS control */
-    MM_PORT_SERIAL_AT_FLAG_GPS_CONTROL = 1 << 3,
+    MM_PORT_SERIAL_AT_FLAG_GPS_CONTROL     = 1 << 3,
+    /* Helper flag to allow plugins specify that generic tags shouldn't be
+     * applied */
+    MM_PORT_SERIAL_AT_FLAG_NONE_NO_GENERIC = 1 << 4,
 } MMPortSerialAtFlag;
 
-typedef gboolean (*MMPortSerialAtResponseParserFn) (gpointer user_data,
-                                                    GString *response,
-                                                    GError **error);
+typedef gboolean (*MMPortSerialAtResponseParserFn) (gpointer   user_data,
+                                                    GString   *response,
+                                                    gpointer   log_object,
+                                                    GError   **error);
 
 typedef void (*MMPortSerialAtUnsolicitedMsgFn) (MMPortSerialAt *port,
                                                 GMatchInfo *match_info,
@@ -76,6 +80,7 @@ struct _MMPortSerialAtClass {
 };
 
 GType mm_port_serial_at_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMPortSerialAt, g_object_unref)
 
 MMPortSerialAt *mm_port_serial_at_new (const char *name,
                                        MMPortSubsys subsys);

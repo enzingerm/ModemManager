@@ -55,7 +55,7 @@
 
     <!--
         CreateBearer:
-        @properties: List of properties to assign to the bearer after creating it.
+        @properties: Dictionary of properties needed to get the bearer connected.
         @path: On success, the object path of the newly created bearer.
 
         Create a new packet data bearer using the given characteristics.
@@ -80,7 +80,7 @@
         <varlistentry><term><literal>"rm-protocol"</literal></term>
           <listitem><para>Protocol of the Rm interface, given as a <link linkend="MMModemCdmaRmProtocol">MMModemCdmaRmProtocol</link> value (signature <literal>"u"</literal>). Optional in CDMA.</para></listitem></varlistentry>
         <varlistentry><term><literal>"number"</literal></term>
-          <listitem><para>Telephone number to dial, given as a string value (signature <literal>"s"</literal>). Required in POTS.</para></listitem></varlistentry>
+          <listitem><para>Number to dial for the data connection, given as a string value (signature <literal>"s"</literal>). Deprecated since version 1.10.0.</para></listitem></varlistentry>
         </variablelist>
 
         Some properties are only applicable to a bearer of certain access
@@ -146,7 +146,12 @@
         SetCurrentCapabilities:
         @capabilities: Bitmask of <link linkend="MMModemCapability">MMModemCapability</link> values, to specify the capabilities to use.
 
-        Set the capabilities of the device. A restart of the modem may be required.
+        Set the capabilities of the device.
+
+        The given bitmask should be supported by the modem, as specified in the
+        #org.freedesktop.ModemManager1.Modem:SupportedCapabilities property.
+
+        This command may power-cycle the device.
     -->
     <method name="SetCurrentCapabilities">
       <arg name="capabilities" type="u" direction="in" />
@@ -178,15 +183,34 @@
     </method>
 
     <!--
-       Command
-       @cmd The command string, e.g. "AT+GCAP" or "+GCAP" (leading AT is inserted if necessary).
-       @timeout The number of seconds to wait for a response.
-       @response The modem's response.
+        SetPrimarySimSlot:
+        @sim_slot: SIM slot number to set as primary.
+
+        Selects which SIM slot to be considered as primary, on devices that expose
+	multiple slots in the #org.freedesktop.ModemManager1.Modem:SimSlots property.
+
+        When the switch happens the modem may require a full device reprobe, so the modem
+	object in DBus will get removed, and recreated once the selected SIM slot is in
+	use.
+
+        There is no limitation on which SIM slot to select, so the user may also set as
+	primary a slot that doesn't currently have any valid SIM card inserted.
+    -->
+    <method name="SetPrimarySimSlot">
+      <arg name="sim_slot" type="u" direction="in" />
+    </method>
+
+    <!--
+       Command:
+       @cmd: The command string, e.g. "AT+GCAP" or "+GCAP" (leading AT is inserted if necessary).
+       @timeout: The number of seconds to wait for a response.
+       @response: The modem's response.
 
        Send an arbitrary AT command to a modem and get the response.
 
        Note that using this interface call is only allowed when running
-       ModemManager in debug mode.
+       ModemManager in debug mode or if the project was built using
+       the <literal>with-at-command-via-dbus</literal> configure option.
       -->
     <method name="Command">
       <arg name="cmd"      type="s" direction="in"  />
@@ -211,9 +235,54 @@
     <!--
         Sim:
 
-        The path of the SIM object available in this device, if any.
+        The path of the primary active SIM object available in this device,
+        if any.
+
+        This SIM object is the one used for network registration and data
+        connection setup.
+
+        If multiple #org.freedesktop.ModemManager1.Modem.SimSlots are
+        supported, the #org.freedesktop.ModemManager1.Modem.PrimarySimSlot
+        index value specifies which is the slot number where this SIM card
+        is available.
     -->
     <property name="Sim" type="o" access="read" />
+
+    <!--
+        SimSlots:
+
+        The list of SIM slots available in the system, including the SIM object
+        paths if the cards are present. If a given SIM slot at a given index
+        doesn't have a SIM card available, an empty object path will be given.
+
+        The length of this array of objects will be equal to the amount of
+        available SIM slots in the system, and the index in the array is the
+        slot index.
+
+        This list includes the SIM object considered as primary active SIM slot
+        (#org.freedesktop.ModemManager1.Modem.Sim) at index
+        #org.freedesktop.ModemManager1.Modem.ActiveSimSlot.
+    -->
+    <property name="SimSlots" type="ao" access="read" />
+
+    <!--
+        PrimarySimSlot:
+
+        The index of the primary active SIM slot in the
+        #org.freedesktop.ModemManager1.Modem.SimSlots array, given in the [1,N]
+        range.
+
+        If multiple SIM slots aren't supported, this property will report
+        value 0.
+
+        In a Multi SIM Single Standby setup, this index identifies the only SIM
+        that is currently active. All the remaining slots will be inactive.
+
+        In a Multi SIM Multi Standby setup, this index identifies the active SIM
+        that is considered primary, i.e. the one that will be used when a data
+        connection is setup.
+    -->
+    <property name="PrimarySimSlot" type="u" access="read" />
 
     <!--
         Bearers:
@@ -230,12 +299,16 @@
         SupportedCapabilities:
 
         List of <link linkend="MMModemCapability">MMModemCapability</link>
-        values, specifying the combinations of generic family of access
+        bitmasks, specifying the combinations of generic family of access
         technologies the modem supports.
 
-        If the modem doesn't allow changing the current capabilities, a single entry with
-        <link linkend="MM-MODEM-CAPABILITY-ANY:CAPS"><constant>MM_MODEM_CAPABILITY_ANY</constant></link>
-        will be given.
+        If the modem doesn't allow changing the current capabilities, the
+        list will report one single entry with the same bitmask as in
+        #org.freedesktop.ModemManager1.Modem:CurrentCapabilities.
+
+        Only multimode devices implementing both 3GPP (GSM/UMTS/LTE/5GNR) and
+        3GPP2 (CDMA/EVDO) specs will report more than one combination of
+        capabilities.
     -->
     <property name="SupportedCapabilities" type="au" access="read" />
 
@@ -243,8 +316,11 @@
         CurrentCapabilities:
 
         Bitmask of <link linkend="MMModemCapability">MMModemCapability</link>
-        values, specifying the  generic family of access technologies the modem
-        currently supports without a firmware reload or reinitialization.
+        values, specifying the currently used generic family of access
+        technologies.
+
+        This bitmask will be one of the ones listed in
+        #org.freedesktop.ModemManager1.Modem:SupportedCapabilities.
     -->
     <property name="CurrentCapabilities" type="u" access="read" />
 

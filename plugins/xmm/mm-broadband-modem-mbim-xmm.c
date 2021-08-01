@@ -22,7 +22,6 @@
 #include <ctype.h>
 
 #include "ModemManager.h"
-#include "mm-log.h"
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-location.h"
 #include "mm-broadband-modem-mbim-xmm.h"
@@ -57,6 +56,9 @@ mm_broadband_modem_mbim_xmm_new (const gchar  *device,
                          MM_IFACE_MODEM_SIM_HOT_SWAP_SUPPORTED, TRUE,
                          MM_IFACE_MODEM_SIM_HOT_SWAP_CONFIGURED, FALSE,
                          MM_IFACE_MODEM_PERIODIC_SIGNAL_CHECK_DISABLED, TRUE,
+#if defined WITH_QMI && QMI_MBIM_QMUX_SUPPORTED
+                         MM_BROADBAND_MODEM_MBIM_QMI_UNSUPPORTED, TRUE,
+#endif
                          NULL);
 }
 

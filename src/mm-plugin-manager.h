@@ -48,7 +48,9 @@ struct _MMPluginManagerClass {
     GObjectClass parent;
 };
 
-GType            mm_plugin_manager_get_type (void);
+GType mm_plugin_manager_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMPluginManager, g_object_unref)
+
 MMPluginManager *mm_plugin_manager_new                         (const gchar          *plugindir,
                                                                 MMFilter             *filter,
                                                                 GError              **error);
@@ -63,5 +65,6 @@ MMPlugin *       mm_plugin_manager_device_support_check_finish (MMPluginManager 
                                                                 GError              **error);
 MMPlugin        *mm_plugin_manager_peek_plugin                 (MMPluginManager      *self,
                                                                 const gchar          *plugin_name);
+const gchar    **mm_plugin_manager_get_subsystems              (MMPluginManager      *self);
 
 #endif /* MM_PLUGIN_MANAGER_H */

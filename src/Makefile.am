@@ -97,6 +97,11 @@ mm-helper-enums-types.c: Makefile.am $(top_srcdir)/build-aux/mm-enums-template.c
 		$(HELPER_ENUMS_INPUTS) > $@
 
 libhelpers_la_SOURCES = \
+	mm-log-object.h \
+	mm-log-object.c \
+	mm-log.c \
+	mm-log.h \
+	mm-log-test.h \
 	mm-error-helpers.c \
 	mm-error-helpers.h \
 	mm-modem-helpers.c \
@@ -131,7 +136,6 @@ endif
 BUILT_SOURCES += $(HELPER_ENUMS_GENERATED)
 CLEANFILES    += $(HELPER_ENUMS_GENERATED)
 
-
 ################################################################################
 # kerneldevice library
 ################################################################################
@@ -160,6 +164,7 @@ endif
 
 libkerneldevice_la_LIBADD = \
 	$(top_builddir)/libmm-glib/libmm-glib.la \
+	$(builddir)/libhelpers.la \
 	$(NULL)
 
 ################################################################################
@@ -225,7 +230,6 @@ endif
 libport_la_LIBADD = \
 	$(top_builddir)/libqcdm/src/libqcdm.la \
 	$(top_builddir)/libmm-glib/libmm-glib.la \
-	$(builddir)/libhelpers.la \
 	$(builddir)/libkerneldevice.la \
 	$(NULL)
 
@@ -283,9 +287,7 @@ ModemManager_SOURCES = \
 	main.c \
 	mm-context.h \
 	mm-context.c \
-	mm-log.c \
-	mm-log.h \
-	mm-utils.h \
+	mm-utils.h mm-utils.c \
 	mm-private-boxed-types.h \
 	mm-private-boxed-types.c \
 	mm-auth-provider.h \

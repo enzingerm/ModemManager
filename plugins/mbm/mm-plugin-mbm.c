@@ -23,7 +23,7 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-plugin-mbm.h"
 #include "mm-broadband-modem-mbm.h"
 
@@ -49,7 +49,7 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_MBIM
     if (mm_port_probe_list_has_mbim_port (probes)) {
-        mm_dbg ("MBIM-powered Ericsson modem found...");
+        mm_obj_dbg (self, "MBIM-powered Ericsson modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_mbim_new (uid,
                                                            drivers,
                                                            mm_plugin_get_name (self),
@@ -70,7 +70,7 @@ create_modem (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     static const gchar *udev_tags[] = {
         "ID_MM_ERICSSON_MBM",
         NULL
@@ -78,7 +78,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_MBM,
-                      MM_PLUGIN_NAME,               "Ericsson MBM",
+                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_UDEV_TAGS,  udev_tags,
                       MM_PLUGIN_ALLOWED_AT,         TRUE,

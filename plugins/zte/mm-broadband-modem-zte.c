@@ -24,7 +24,6 @@
 #include <ctype.h>
 
 #include "ModemManager.h"
-#include "mm-log.h"
 #include "mm-errors-types.h"
 #include "mm-modem-helpers.h"
 #include "mm-base-modem-at.h"
@@ -70,7 +69,6 @@ load_unlock_retries_ready (MMBaseModem *self,
 
     response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
     if (!response) {
-        mm_dbg ("Couldn't query unlock retries: '%s'", error->message);
         g_task_return_error (task, error);
         g_object_unref (task);
         return;
@@ -189,6 +187,19 @@ modem_after_sim_unlock_context_step (GTask *task)
                               task);
 }
 
+static gboolean
+after_sim_unlock_wait_cb (GTask *task)
+{
+    /* Attempt to disable floods of "+ZUSIMR:2" unsolicited responses that
+     * eventually fill up the device's buffers and make it crash.  Normally
+     * done during probing, but if the device has a PIN enabled it won't
+     * accept the +CPMS? during the probe and we have to do it here.
+     */
+    modem_after_sim_unlock_context_step (task);
+
+    return G_SOURCE_REMOVE;
+}
+
 static void
 modem_after_sim_unlock (MMIfaceModem *self,
                         GAsyncReadyCallback callback,
@@ -203,12 +214,7 @@ modem_after_sim_unlock (MMIfaceModem *self,
     task = g_task_new (self, NULL, callback, user_data);
     g_task_set_task_data (task, ctx, g_free);
 
-    /* Attempt to disable floods of "+ZUSIMR:2" unsolicited responses that
-     * eventually fill up the device's buffers and make it crash.  Normally
-     * done during probing, but if the device has a PIN enabled it won't
-     * accept the +CPMS? during the probe and we have to do it here.
-     */
-    modem_after_sim_unlock_context_step (task);
+    g_timeout_add_seconds (1, (GSourceFunc)after_sim_unlock_wait_cb, task);
 }
 
 /*****************************************************************************/
@@ -303,7 +309,7 @@ parent_load_supported_modes_ready (MMIfaceModem *self,
     }
 
     /* Filter out those unsupported modes */
-    filtered = mm_filter_supported_modes (all, combinations);
+    filtered = mm_filter_supported_modes (all, combinations, self);
     g_array_unref (all);
     g_array_unref (combinations);
 

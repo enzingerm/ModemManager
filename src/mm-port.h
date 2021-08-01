@@ -26,10 +26,11 @@ typedef enum { /*< underscore_name=mm_port_subsys >*/
     MM_PORT_SUBSYS_UNKNOWN = 0x0,
     MM_PORT_SUBSYS_TTY,
     MM_PORT_SUBSYS_NET,
-    MM_PORT_SUBSYS_USB,
+    MM_PORT_SUBSYS_USBMISC,
     MM_PORT_SUBSYS_UNIX,
-
-    MM_PORT_SUBSYS_LAST = MM_PORT_SUBSYS_UNIX /*< skip >*/
+    MM_PORT_SUBSYS_RPMSG,
+    MM_PORT_SUBSYS_WWAN,
+    MM_PORT_SUBSYS_LAST = MM_PORT_SUBSYS_WWAN /*< skip >*/
 } MMPortSubsys;
 
 typedef enum { /*< underscore_name=mm_port_type >*/
@@ -72,6 +73,7 @@ struct _MMPortClass {
 };
 
 GType mm_port_get_type (void);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMPort, g_object_unref)
 
 const gchar    *mm_port_get_device         (MMPort *self);
 MMPortSubsys    mm_port_get_subsys         (MMPort *self);

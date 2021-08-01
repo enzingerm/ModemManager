@@ -91,8 +91,9 @@
           </varlistentry>
           <varlistentry><term><literal>"number"</literal></term>
             <listitem>
-              For POTS devices the number to dial,,
+              Number to dial for the data connection,
               given as a string value (signature <literal>"s"</literal>).
+              Deprecated since version 1.10.0.
             </listitem>
           </varlistentry>
           <varlistentry><term><literal>"allow-roaming"</literal></term>
@@ -156,7 +157,7 @@
               unsigned integer values (signature <literal>"au"</literal>).
             </listitem>
           </varlistentry>
-          <varlistentry><term><literal>"access-technology"</literal></term>
+          <varlistentry><term><literal>"access-technologies"</literal></term>
             <listitem>
               A <link linkend="MMModemAccessTechnology">MMModemAccessTechnology</link> value,
               given only when registered, as an unsigned integer value

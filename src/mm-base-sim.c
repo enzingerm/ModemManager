@@ -30,20 +30,22 @@
 #include "mm-base-sim.h"
 #include "mm-base-modem-at.h"
 #include "mm-base-modem.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 
 static void async_initable_iface_init (GAsyncInitableIface *iface);
+static void log_object_iface_init     (MMLogObjectInterface *iface);
 
 G_DEFINE_TYPE_EXTENDED (MMBaseSim, mm_base_sim, MM_GDBUS_TYPE_SIM_SKELETON, 0,
-                        G_IMPLEMENT_INTERFACE (G_TYPE_ASYNC_INITABLE,
-                                               async_initable_iface_init))
+                        G_IMPLEMENT_INTERFACE (G_TYPE_ASYNC_INITABLE, async_initable_iface_init)
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_LOG_OBJECT, log_object_iface_init))
 
 enum {
     PROP_0,
     PROP_PATH,
     PROP_CONNECTION,
     PROP_MODEM,
+    PROP_SLOT_NUMBER,
     PROP_LAST
 };
 
@@ -57,10 +59,16 @@ static GParamSpec *properties[PROP_LAST];
 struct _MMBaseSimPrivate {
     /* The connection to the system bus */
     GDBusConnection *connection;
+    guint            dbus_id;
+
     /* The modem which owns this SIM */
     MMBaseModem *modem;
     /* The path where the SIM object is exported */
     gchar *path;
+
+    /* The SIM slot number, which will be 0 always if the system
+     * doesn't support multiple SIMS. */
+     guint slot_number;
 };
 
 static guint signals[SIGNAL_LAST] = { 0 };
@@ -70,14 +78,28 @@ static guint signals[SIGNAL_LAST] = { 0 };
 void
 mm_base_sim_export (MMBaseSim *self)
 {
-    static guint id = 0;
     gchar *path;
 
-    path = g_strdup_printf (MM_DBUS_SIM_PREFIX "/%d", id++);
+    path = g_strdup_printf (MM_DBUS_SIM_PREFIX "/%d", self->priv->dbus_id);
     g_object_set (self,
                   MM_BASE_SIM_PATH, path,
                   NULL);
     g_free (path);
+}
+
+/*****************************************************************************/
+/* Reprobe when a puk lock is discovered after pin1_retries are exhausted */
+
+static void
+reprobe_if_puk_discovered (MMBaseSim *self,
+                           GError *error)
+{
+    if (g_error_matches (error,
+                         MM_MOBILE_EQUIPMENT_ERROR,
+                         MM_MOBILE_EQUIPMENT_ERROR_SIM_PUK)) {
+        mm_obj_dbg (self, "Discovered PUK lock, discarding old modem...");
+        mm_base_modem_process_sim_event (self->priv->modem);
+    }
 }
 
 /*****************************************************************************/
@@ -155,17 +177,18 @@ handle_change_pin_context_free (HandleChangePinContext *ctx)
 }
 
 static void
-after_change_update_lock_info_ready (MMIfaceModem *self,
+after_change_update_lock_info_ready (MMIfaceModem *modem,
                                      GAsyncResult *res,
                                      HandleChangePinContext *ctx)
 {
     /* We just want to ensure that we tried to update the unlock
      * retries, no big issue if it failed */
-    mm_iface_modem_update_lock_info_finish (self, res, NULL);
+    mm_iface_modem_update_lock_info_finish (modem, res, NULL);
 
     if (ctx->save_error) {
-        g_dbus_method_invocation_take_error (ctx->invocation, ctx->save_error);
-        ctx->save_error = NULL;
+        g_dbus_method_invocation_return_gerror (ctx->invocation, ctx->save_error);
+        reprobe_if_puk_discovered (ctx->self, ctx->save_error);
+        g_clear_error (&ctx->save_error);
     } else {
         mm_gdbus_sim_complete_change_pin (MM_GDBUS_SIM (ctx->self), ctx->invocation);
     }
@@ -219,11 +242,21 @@ handle_change_pin_auth_ready (MMBaseModem *modem,
         return;
     }
 
+    if (!mm_gdbus_sim_get_active (MM_GDBUS_SIM (ctx->self))) {
+        g_dbus_method_invocation_return_error (ctx->invocation,
+                                               MM_CORE_ERROR,
+                                               MM_CORE_ERROR_UNSUPPORTED,
+                                               "Cannot change PIN: "
+                                               "SIM not currently active");
+        handle_change_pin_context_free (ctx);
+        return;
+    }
+
     MM_BASE_SIM_GET_CLASS (ctx->self)->change_pin (ctx->self,
-                                              ctx->old_pin,
-                                              ctx->new_pin,
-                                              (GAsyncReadyCallback)handle_change_pin_ready,
-                                              ctx);
+                                                   ctx->old_pin,
+                                                   ctx->new_pin,
+                                                   (GAsyncReadyCallback)handle_change_pin_ready,
+                                                   ctx);
 }
 
 static gboolean
@@ -332,8 +365,9 @@ after_enable_update_lock_info_ready (MMIfaceModem *modem,
     mm_iface_modem_update_lock_info_finish (modem, res, NULL);
 
     if (ctx->save_error) {
-        g_dbus_method_invocation_take_error (ctx->invocation, ctx->save_error);
-        ctx->save_error = NULL;
+        g_dbus_method_invocation_return_gerror (ctx->invocation, ctx->save_error);
+        reprobe_if_puk_discovered (ctx->self, ctx->save_error);
+        g_clear_error (&ctx->save_error);
     } else {
         /* Signal about the new lock state */
         g_signal_emit (ctx->self, signals[SIGNAL_PIN_LOCK_ENABLED], 0, ctx->enabled);
@@ -389,11 +423,21 @@ handle_enable_pin_auth_ready (MMBaseModem *modem,
         return;
     }
 
+    if (!mm_gdbus_sim_get_active (MM_GDBUS_SIM (ctx->self))) {
+        g_dbus_method_invocation_return_error (ctx->invocation,
+                                               MM_CORE_ERROR,
+                                               MM_CORE_ERROR_UNSUPPORTED,
+                                               "Cannot enable/disable PIN: "
+                                               "SIM not currently active");
+        handle_enable_pin_context_free (ctx);
+        return;
+    }
+
     MM_BASE_SIM_GET_CLASS (ctx->self)->enable_pin (ctx->self,
-                                              ctx->pin,
-                                              ctx->enabled,
-                                              (GAsyncReadyCallback)handle_enable_pin_ready,
-                                              ctx);
+                                                   ctx->pin,
+                                                   ctx->enabled,
+                                                   (GAsyncReadyCallback)handle_enable_pin_ready,
+                                                   ctx);
 }
 
 static gboolean
@@ -492,17 +536,6 @@ send_pin (MMBaseSim *self,
 /*****************************************************************************/
 /* SEND PIN/PUK (common logic) */
 
-typedef struct {
-    GError *save_error;
-} SendPinPukContext;
-
-static void
-send_pin_puk_context_free (SendPinPukContext *ctx)
-{
-    g_clear_error (&ctx->save_error);
-    g_free (ctx);
-}
-
 static GError *
 error_for_unlock_check (MMModemLock lock)
 {
@@ -536,17 +569,17 @@ error_for_unlock_check (MMModemLock lock)
 }
 
 gboolean
-mm_base_sim_send_pin_finish (MMBaseSim *self,
-                             GAsyncResult *res,
-                             GError **error)
+mm_base_sim_send_pin_finish (MMBaseSim     *self,
+                             GAsyncResult  *res,
+                             GError       **error)
 {
     return g_task_propagate_boolean (G_TASK (res), error);
 }
 
 gboolean
-mm_base_sim_send_puk_finish (MMBaseSim *self,
-                             GAsyncResult *res,
-                             GError **error)
+mm_base_sim_send_puk_finish (MMBaseSim     *self,
+                             GAsyncResult  *res,
+                             GError       **error)
 {
     return g_task_propagate_boolean (G_TASK (res), error);
 }
@@ -554,13 +587,10 @@ mm_base_sim_send_puk_finish (MMBaseSim *self,
 static void
 update_lock_info_ready (MMIfaceModem *modem,
                         GAsyncResult *res,
-                        GTask *task)
+                        GTask        *task)
 {
-    SendPinPukContext *ctx;
-    GError *error = NULL;
-    MMModemLock lock;
-
-    ctx = g_task_get_task_data (task);
+    GError      *error = NULL;
+    MMModemLock  lock;
 
     lock = mm_iface_modem_update_lock_info_finish (modem, res, &error);
     /* Even if we may be SIM-PIN2/PUK2 locked, we don't consider this an error
@@ -568,18 +598,20 @@ update_lock_info_ready (MMIfaceModem *modem,
     if (lock != MM_MODEM_LOCK_NONE &&
         lock != MM_MODEM_LOCK_SIM_PIN2 &&
         lock != MM_MODEM_LOCK_SIM_PUK2) {
+        const GError *saved_error;
+
         /* Device is locked. Now:
+         *   - If we got an error during update_lock_info, report it. The sim might have been blocked.
          *   - If we got an error in the original send-pin action, report it.
-         *   - If we got an error in the pin-check action, report it.
          *   - Otherwise, build our own error from the lock code.
          */
-        if (ctx->save_error) {
-            g_clear_error (&error);
-            error = ctx->save_error;
-            ctx->save_error = NULL;
-        } else if (!error)
-            error = error_for_unlock_check (lock);
-
+        if (!error) {
+            saved_error = g_task_get_task_data (task);
+            if (saved_error)
+                error = g_error_copy (saved_error);
+            else
+                error = error_for_unlock_check (lock);
+        }
         g_task_return_error (task, error);
     } else
         g_task_return_boolean (task, TRUE);
@@ -588,17 +620,16 @@ update_lock_info_ready (MMIfaceModem *modem,
 }
 
 static void
-send_pin_ready (MMBaseSim *self,
+send_pin_ready (MMBaseSim    *self,
                 GAsyncResult *res,
-                GTask *task)
+                GTask        *task)
 {
-    SendPinPukContext *ctx;
-    MMModemLock known_lock = MM_MODEM_LOCK_UNKNOWN;
+    GError      *error = NULL;
+    MMModemLock  known_lock = MM_MODEM_LOCK_UNKNOWN;
 
-    ctx = g_task_get_task_data (task);
-
-    if (!MM_BASE_SIM_GET_CLASS (self)->send_pin_finish (self, res, &ctx->save_error)) {
-        if (g_error_matches (ctx->save_error,
+    if (!MM_BASE_SIM_GET_CLASS (self)->send_pin_finish (self, res, &error)) {
+        g_task_set_task_data (task, error, (GDestroyNotify)g_error_free);
+        if (g_error_matches (error,
                              MM_MOBILE_EQUIPMENT_ERROR,
                              MM_MOBILE_EQUIPMENT_ERROR_SIM_PUK))
             known_lock = MM_MODEM_LOCK_SIM_PUK;
@@ -613,15 +644,14 @@ send_pin_ready (MMBaseSim *self,
 }
 
 static void
-send_puk_ready (MMBaseSim *self,
+send_puk_ready (MMBaseSim    *self,
                 GAsyncResult *res,
-                GTask *task)
+                GTask        *task)
 {
-    SendPinPukContext *ctx;
+    GError *error = NULL;
 
-    ctx = g_task_get_task_data (task);
-
-    MM_BASE_SIM_GET_CLASS (self)->send_puk_finish (self, res, &ctx->save_error);
+    if (!MM_BASE_SIM_GET_CLASS (self)->send_puk_finish (self, res, &error))
+        g_task_set_task_data (task, error, (GDestroyNotify)g_error_free);
 
     /* Once pin/puk has been sent, recheck lock */
     mm_iface_modem_update_lock_info (MM_IFACE_MODEM (self->priv->modem),
@@ -631,73 +661,71 @@ send_puk_ready (MMBaseSim *self,
 }
 
 void
-mm_base_sim_send_pin (MMBaseSim *self,
-                      const gchar *pin,
-                      GAsyncReadyCallback callback,
-                      gpointer user_data)
+mm_base_sim_send_pin (MMBaseSim           *self,
+                      const gchar         *pin,
+                      GAsyncReadyCallback  callback,
+                      gpointer             user_data)
 {
-    SendPinPukContext *ctx;
     GTask *task;
+
+    task = g_task_new (self, NULL, callback, user_data);
 
     /* If sending PIN is not implemented, report an error */
     if (!MM_BASE_SIM_GET_CLASS (self)->send_pin ||
         !MM_BASE_SIM_GET_CLASS (self)->send_pin_finish) {
-        g_task_report_new_error (self,
-                                 callback,
-                                 user_data,
-                                 mm_base_sim_send_pin,
-                                 MM_CORE_ERROR,
-                                 MM_CORE_ERROR_UNSUPPORTED,
-                                 "Cannot send PIN: "
-                                 "operation not supported");
+        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
+                                 "Cannot send PIN: operation not supported");
+        g_object_unref (task);
         return;
     }
 
-    ctx = g_new0 (SendPinPukContext, 1);
-
-    task = g_task_new (self, NULL, callback, user_data);
-    g_task_set_task_data (task, ctx, (GDestroyNotify)send_pin_puk_context_free);
+    /* Only allow sending SIM-PIN if really SIM-PIN locked */
+    if (mm_iface_modem_get_unlock_required (MM_IFACE_MODEM (self->priv->modem)) != MM_MODEM_LOCK_SIM_PIN) {
+        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_WRONG_STATE,
+                                 "Cannot send PIN: device is not SIM-PIN locked");
+        g_object_unref (task);
+        return;
+    }
 
     MM_BASE_SIM_GET_CLASS (self)->send_pin (self,
-                                       pin,
-                                       (GAsyncReadyCallback)send_pin_ready,
-                                       task);
+                                            pin,
+                                            (GAsyncReadyCallback)send_pin_ready,
+                                            task);
 }
 
 void
-mm_base_sim_send_puk (MMBaseSim *self,
-                      const gchar *puk,
-                      const gchar *new_pin,
-                      GAsyncReadyCallback callback,
-                      gpointer user_data)
+mm_base_sim_send_puk (MMBaseSim           *self,
+                      const gchar         *puk,
+                      const gchar         *new_pin,
+                      GAsyncReadyCallback  callback,
+                      gpointer             user_data)
 {
-    SendPinPukContext *ctx;
     GTask *task;
+
+    task = g_task_new (self, NULL, callback, user_data);
 
     /* If sending PIN is not implemented, report an error */
     if (!MM_BASE_SIM_GET_CLASS (self)->send_puk ||
         !MM_BASE_SIM_GET_CLASS (self)->send_puk_finish) {
-        g_task_report_new_error (self,
-                                 callback,
-                                 user_data,
-                                 mm_base_sim_send_puk,
-                                 MM_CORE_ERROR,
-                                 MM_CORE_ERROR_UNSUPPORTED,
-                                 "Cannot send PUK: "
-                                 "operation not supported");
+        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
+                                 "Cannot send PUK: operation not supported");
+        g_object_unref (task);
         return;
     }
 
-    ctx = g_new0 (SendPinPukContext, 1);
-
-    task = g_task_new (self, NULL, callback, user_data);
-    g_task_set_task_data (task, ctx, (GDestroyNotify)send_pin_puk_context_free);
+    /* Only allow sending SIM-PUK if really SIM-PUK locked */
+    if (mm_iface_modem_get_unlock_required (MM_IFACE_MODEM (self->priv->modem)) != MM_MODEM_LOCK_SIM_PUK) {
+        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_WRONG_STATE,
+                                 "Cannot send PUK: device is not SIM-PUK locked");
+        g_object_unref (task);
+        return;
+    }
 
     MM_BASE_SIM_GET_CLASS (self)->send_puk (self,
-                                       puk,
-                                       new_pin,
-                                       (GAsyncReadyCallback)send_puk_ready,
-                                       task);
+                                            puk,
+                                            new_pin,
+                                            (GAsyncReadyCallback)send_puk_ready,
+                                            task);
 }
 
 /*****************************************************************************/
@@ -775,9 +803,11 @@ handle_send_pin_ready (MMBaseSim *self,
 {
     GError *error = NULL;
 
-    if (!mm_base_sim_send_pin_finish (self, res, &error))
-        g_dbus_method_invocation_take_error (ctx->invocation, error);
-    else
+    if (!mm_base_sim_send_pin_finish (self, res, &error)) {
+        g_dbus_method_invocation_return_gerror (ctx->invocation, error);
+        reprobe_if_puk_discovered (self, error);
+        g_clear_error (&error);
+    } else
         mm_gdbus_sim_complete_send_pin (MM_GDBUS_SIM (self), ctx->invocation);
 
     handle_send_pin_context_free (ctx);
@@ -792,6 +822,16 @@ handle_send_pin_auth_ready (MMBaseModem *modem,
 
     if (!mm_base_modem_authorize_finish (modem, res, &error)) {
         g_dbus_method_invocation_take_error (ctx->invocation, error);
+        handle_send_pin_context_free (ctx);
+        return;
+    }
+
+    if (!mm_gdbus_sim_get_active (MM_GDBUS_SIM (ctx->self))) {
+        g_dbus_method_invocation_return_error (ctx->invocation,
+                                               MM_CORE_ERROR,
+                                               MM_CORE_ERROR_UNSUPPORTED,
+                                               "Cannot send PIN: "
+                                               "SIM not currently active");
         handle_send_pin_context_free (ctx);
         return;
     }
@@ -848,11 +888,26 @@ handle_send_puk_ready (MMBaseSim *self,
                        HandleSendPukContext *ctx)
 {
     GError *error = NULL;
+    gboolean sim_error = FALSE;
 
-    if (!mm_base_sim_send_puk_finish (self, res, &error))
+    if (!mm_base_sim_send_puk_finish (self, res, &error)) {
+        sim_error = g_error_matches (error,
+                                     MM_MOBILE_EQUIPMENT_ERROR,
+                                     MM_MOBILE_EQUIPMENT_ERROR_SIM_NOT_INSERTED) ||
+                    g_error_matches (error,
+                                     MM_MOBILE_EQUIPMENT_ERROR,
+                                     MM_MOBILE_EQUIPMENT_ERROR_SIM_FAILURE) ||
+                    g_error_matches (error,
+                                     MM_MOBILE_EQUIPMENT_ERROR,
+                                     MM_MOBILE_EQUIPMENT_ERROR_SIM_WRONG);
         g_dbus_method_invocation_take_error (ctx->invocation, error);
-    else
+    } else
         mm_gdbus_sim_complete_send_puk (MM_GDBUS_SIM (self), ctx->invocation);
+
+    if (sim_error) {
+        mm_obj_info (self, "Received critical sim error. SIM might be permanently blocked. Reprobing...");
+        mm_base_modem_process_sim_event (self->priv->modem);
+    }
 
     handle_send_puk_context_free (ctx);
 }
@@ -866,6 +921,16 @@ handle_send_puk_auth_ready (MMBaseModem *modem,
 
     if (!mm_base_modem_authorize_finish (modem, res, &error)) {
         g_dbus_method_invocation_take_error (ctx->invocation, error);
+        handle_send_puk_context_free (ctx);
+        return;
+    }
+
+    if (!mm_gdbus_sim_get_active (MM_GDBUS_SIM (ctx->self))) {
+        g_dbus_method_invocation_return_error (ctx->invocation,
+                                               MM_CORE_ERROR,
+                                               MM_CORE_ERROR_UNSUPPORTED,
+                                               "Cannot send PUK: "
+                                               "SIM not currently active");
         handle_send_puk_context_free (ctx);
         return;
     }
@@ -928,9 +993,7 @@ sim_dbus_export (MMBaseSim *self)
                                            self->priv->connection,
                                            self->priv->path,
                                            &error)) {
-        mm_warn ("couldn't export SIM at '%s': '%s'",
-                 self->priv->path,
-                 error->message);
+        mm_obj_warn (self, "couldn't export SIM: %s", error->message);
         g_error_free (error);
     }
 }
@@ -949,6 +1012,12 @@ const gchar *
 mm_base_sim_get_path (MMBaseSim *self)
 {
     return self->priv->path;
+}
+
+guint
+mm_base_sim_get_slot_number (MMBaseSim *self)
+{
+    return self->priv->slot_number;
 }
 
 /*****************************************************************************/
@@ -1047,7 +1116,7 @@ load_emergency_numbers_finish (MMBaseSim     *self,
         return NULL;
 
     for (i = 0; emergency_numbers[i]; i++)
-        mm_dbg ("loaded emergency number: %s", emergency_numbers[i]);
+        mm_obj_dbg (self, "loaded emergency number: %s", emergency_numbers[i]);
 
     return emergency_numbers;
 }
@@ -1059,7 +1128,7 @@ load_emergency_numbers (MMBaseSim           *self,
                         GAsyncReadyCallback  callback,
                         gpointer             user_data)
 {
-    mm_dbg ("loading emergency numbers...");
+    mm_obj_dbg (self, "loading emergency numbers...");
 
     /* READ BINARY of EF_ECC (Emergency Call Codes) ETSI TS 51.011 section 10.3.27 */
     mm_base_modem_at_command (
@@ -1125,7 +1194,7 @@ load_sim_identifier_finish (MMBaseSim *self,
     if (!sim_identifier)
         return NULL;
 
-    mm_dbg ("loaded SIM identifier: %s", sim_identifier);
+    mm_obj_dbg (self, "loaded SIM identifier: %s", sim_identifier);
     return sim_identifier;
 }
 
@@ -1136,7 +1205,7 @@ load_sim_identifier (MMBaseSim *self,
                      GAsyncReadyCallback callback,
                      gpointer user_data)
 {
-    mm_dbg ("loading SIM identifier...");
+    mm_obj_dbg (self, "loading SIM identifier...");
 
     /* READ BINARY of EFiccid (ICC Identification) ETSI TS 102.221 section 13.2 */
     mm_base_modem_at_command (
@@ -1193,7 +1262,7 @@ load_imsi_finish (MMBaseSim *self,
     if (!imsi)
         return NULL;
 
-    mm_dbg ("loaded IMSI: %s", imsi);
+    mm_obj_dbg (self, "loaded IMSI: %s", imsi);
     return imsi;
 }
 
@@ -1204,7 +1273,7 @@ load_imsi (MMBaseSim *self,
            GAsyncReadyCallback callback,
            gpointer user_data)
 {
-    mm_dbg ("loading IMSI...");
+    mm_obj_dbg (self, "loading IMSI...");
 
     mm_base_modem_at_command (
         self->priv->modem,
@@ -1222,9 +1291,9 @@ static guint
 parse_mnc_length (const gchar *response,
                   GError **error)
 {
-    guint sw1 = 0;
-    guint sw2 = 0;
-    gchar *hex = 0;
+    guint             sw1 = 0;
+    guint             sw2 = 0;
+    g_autofree gchar *hex = NULL;
 
     if (!mm_3gpp_parse_crsm_response (response,
                                       &sw1,
@@ -1237,47 +1306,34 @@ parse_mnc_length (const gchar *response,
         (sw1 == 0x91) ||
         (sw1 == 0x92) ||
         (sw1 == 0x9f)) {
-        gsize buflen = 0;
-        guint32 mnc_len;
-        gchar *bin;
+        gsize              buflen = 0;
+        guint32            mnc_len;
+        g_autofree guint8 *bin = NULL;
 
         /* Convert hex string to binary */
-        bin = mm_utils_hexstr2bin (hex, &buflen);
-        if (!bin || buflen < 4) {
-            g_set_error (error,
-                         MM_CORE_ERROR,
-                         MM_CORE_ERROR_FAILED,
-                         "SIM returned malformed response '%s'",
-                         hex);
-            g_free (bin);
-            g_free (hex);
+        bin = mm_utils_hexstr2bin (hex, -1, &buflen, error);
+        if (!bin) {
+            g_prefix_error (error, "SIM returned malformed response '%s': ", hex);
+            return 0;
+        }
+        if (buflen < 4) {
+            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                         "SIM returned malformed response '%s': too short", hex);
             return 0;
         }
 
-        g_free (hex);
-
         /* MNC length is byte 4 of this SIM file */
-        mnc_len = bin[3] & 0xFF;
-        if (mnc_len == 2 || mnc_len == 3) {
-            g_free (bin);
+        mnc_len = bin[3];
+        if (mnc_len == 2 || mnc_len == 3)
             return mnc_len;
-        }
 
-        g_set_error (error,
-                     MM_CORE_ERROR,
-                     MM_CORE_ERROR_FAILED,
-                     "SIM returned invalid MNC length %d (should be either 2 or 3)",
-                     mnc_len);
-        g_free (bin);
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "SIM returned invalid MNC length %d (should be either 2 or 3)", mnc_len);
         return 0;
     }
 
-    g_free (hex);
-    g_set_error (error,
-                 MM_CORE_ERROR,
-                 MM_CORE_ERROR_FAILED,
-                 "SIM failed to handle CRSM request (sw1 %d sw2 %d)",
-                 sw1, sw2);
+    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                 "SIM failed to handle CRSM request (sw1 %d sw2 %d)", sw1, sw2);
     return 0;
 }
 
@@ -1322,7 +1378,7 @@ load_operator_identifier (MMBaseSim *self,
                           GAsyncReadyCallback callback,
                           gpointer user_data)
 {
-    mm_dbg ("loading Operator ID...");
+    mm_obj_dbg (self, "loading operator ID...");
 
     /* READ BINARY of EFad (Administrative Data) ETSI 51.011 section 10.3.18 */
     mm_base_modem_at_command (
@@ -1341,9 +1397,9 @@ static gchar *
 parse_spn (const gchar *response,
            GError **error)
 {
-    guint sw1 = 0;
-    guint sw2 = 0;
-    gchar *hex = 0;
+    guint             sw1 = 0;
+    guint             sw2 = 0;
+    g_autofree gchar *hex = NULL;
 
     if (!mm_3gpp_parse_crsm_response (response,
                                       &sw1,
@@ -1356,40 +1412,35 @@ parse_spn (const gchar *response,
         (sw1 == 0x91) ||
         (sw1 == 0x92) ||
         (sw1 == 0x9f)) {
-        gsize buflen = 0;
-        gchar *bin;
-        gchar *utf8;
+        g_autoptr(GByteArray)  bin_array = NULL;
+        g_autofree guint8     *bin = NULL;
+        gsize                  binlen = 0;
 
         /* Convert hex string to binary */
-        bin = mm_utils_hexstr2bin (hex, &buflen);
+        bin = mm_utils_hexstr2bin (hex, -1, &binlen, error);
         if (!bin) {
-            g_set_error (error,
-                         MM_CORE_ERROR,
-                         MM_CORE_ERROR_FAILED,
-                         "SIM returned malformed response '%s'",
-                         hex);
-            g_free (hex);
+            g_prefix_error (error, "SIM returned malformed response '%s': ", hex);
             return NULL;
         }
 
-        g_free (hex);
-
         /* Remove the FF filler at the end */
-        while (buflen > 1 && bin[buflen - 1] == (char)0xff)
-            buflen--;
+        while (binlen > 1 && bin[binlen - 1] == 0xff)
+            binlen--;
+        if (binlen <= 1) {
+            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                         "SIM returned empty response '%s'", hex);
+            return NULL;
+        }
+        /* Setup as bytearray.
+         * First byte is metadata; remainder is GSM-7 unpacked into octets; convert to UTF8 */
+        bin_array = g_byte_array_sized_new (binlen - 1);
+        g_byte_array_append (bin_array, bin + 1, binlen - 1);
 
-        /* First byte is metadata; remainder is GSM-7 unpacked into octets; convert to UTF8 */
-        utf8 = (gchar *)mm_charset_gsm_unpacked_to_utf8 ((guint8 *)bin + 1, buflen - 1);
-        g_free (bin);
-        return utf8;
+        return mm_modem_charset_bytearray_to_utf8 (bin_array, MM_MODEM_CHARSET_GSM, FALSE, error);
     }
 
-    g_free (hex);
-    g_set_error (error,
-                 MM_CORE_ERROR,
-                 MM_CORE_ERROR_FAILED,
-                 "SIM failed to handle CRSM request (sw1 %d sw2 %d)",
-                 sw1, sw2);
+    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                 "SIM failed to handle CRSM request (sw1 %d sw2 %d)", sw1, sw2);
     return NULL;
 }
 
@@ -1417,7 +1468,7 @@ load_operator_name (MMBaseSim *self,
                     GAsyncReadyCallback callback,
                     gpointer user_data)
 {
-    mm_dbg ("loading Operator Name...");
+    mm_obj_dbg (self, "loading operator name...");
 
     /* READ BINARY of EFspn (Service Provider Name) ETSI 51.011 section 10.3.11 */
     mm_base_modem_at_command (
@@ -1431,13 +1482,46 @@ load_operator_name (MMBaseSim *self,
 
 /*****************************************************************************/
 
+MMBaseSim *
+mm_base_sim_new_initialized (MMBaseModem *modem,
+                             guint        slot_number,
+                             gboolean     active,
+                             const gchar *sim_identifier,
+                             const gchar *imsi,
+                             const gchar *eid,
+                             const gchar *operator_identifier,
+                             const gchar *operator_name,
+                             const GStrv  emergency_numbers)
+{
+    MMBaseSim *sim;
+
+    sim = MM_BASE_SIM (g_object_new (MM_TYPE_BASE_SIM,
+                                     MM_BASE_SIM_MODEM,       modem,
+                                     MM_BASE_SIM_SLOT_NUMBER, slot_number,
+                                     "active",                active,
+                                     "sim-identifier",        sim_identifier,
+                                     "imsi",                  imsi,
+                                     "eid",                   eid,
+                                     "operator-identifier",   operator_identifier,
+                                     "operator-name",         operator_name,
+                                     "emergency-numbers",     emergency_numbers,
+                                     NULL));
+
+    mm_base_sim_export (sim);
+    return sim;
+}
+
+/*****************************************************************************/
+
 typedef struct _InitAsyncContext InitAsyncContext;
 static void interface_initialization_step (GTask *task);
 
 typedef enum {
     INITIALIZATION_STEP_FIRST,
+    INITIALIZATION_STEP_WAIT_READY,
     INITIALIZATION_STEP_SIM_IDENTIFIER,
     INITIALIZATION_STEP_IMSI,
+    INITIALIZATION_STEP_EID,
     INITIALIZATION_STEP_OPERATOR_ID,
     INITIALIZATION_STEP_OPERATOR_NAME,
     INITIALIZATION_STEP_EMERGENCY_NUMBERS,
@@ -1501,8 +1585,7 @@ init_load_sim_identifier_ready (MMBaseSim *self,
             return;
         }
 
-        mm_warn ("couldn't load SIM identifier: '%s'",
-                 error ? error->message : "unknown error");
+        mm_obj_warn (self, "couldn't load SIM identifier: %s", error ? error->message : "unknown error");
         g_clear_error (&error);
     }
 
@@ -1525,7 +1608,7 @@ init_load_emergency_numbers_ready (MMBaseSim    *self,
 
     str_list = MM_BASE_SIM_GET_CLASS (self)->load_emergency_numbers_finish (self, res, &error);
     if (error) {
-        mm_warn ("couldn't load list of Emergency Numbers: '%s'", error->message);
+        mm_obj_warn (self, "couldn't load list of emergency numbers: %s", error->message);
         g_error_free (error);
     }
 
@@ -1556,7 +1639,7 @@ init_load_emergency_numbers_ready (MMBaseSim    *self,
         g_free (val);                                                   \
                                                                         \
         if (error) {                                                    \
-            mm_warn ("couldn't load %s: '%s'", DISPLAY, error->message); \
+            mm_obj_warn (self, "couldn't load %s: %s", DISPLAY, error->message); \
             g_error_free (error);                                       \
         }                                                               \
                                                                         \
@@ -1567,8 +1650,26 @@ init_load_emergency_numbers_ready (MMBaseSim    *self,
     }
 
 STR_REPLY_READY_FN (imsi, "IMSI")
-STR_REPLY_READY_FN (operator_identifier, "Operator identifier")
-STR_REPLY_READY_FN (operator_name, "Operator name")
+STR_REPLY_READY_FN (eid, "EID")
+STR_REPLY_READY_FN (operator_identifier, "operator identifier")
+STR_REPLY_READY_FN (operator_name, "operator name")
+
+static void
+init_wait_sim_ready (MMBaseSim    *self,
+                     GAsyncResult *res,
+                     GTask        *task)
+{
+    InitAsyncContext  *ctx;
+    g_autoptr(GError)  error = NULL;
+
+    if (!MM_BASE_SIM_GET_CLASS (self)->wait_sim_ready_finish (self, res, &error))
+        mm_obj_warn (self, "couldn't wait for SIM to be ready: %s", error->message);
+
+    /* Go on to next step */
+    ctx = g_task_get_task_data (task);
+    ctx->step++;
+    interface_initialization_step (task);
+}
 
 static void
 interface_initialization_step (GTask *task)
@@ -1586,6 +1687,18 @@ interface_initialization_step (GTask *task)
 
     switch (ctx->step) {
     case INITIALIZATION_STEP_FIRST:
+        ctx->step++;
+        /* Fall through */
+
+    case INITIALIZATION_STEP_WAIT_READY:
+        if (MM_BASE_SIM_GET_CLASS (self)->wait_sim_ready &&
+            MM_BASE_SIM_GET_CLASS (self)->wait_sim_ready_finish) {
+            MM_BASE_SIM_GET_CLASS (self)->wait_sim_ready (
+                self,
+                (GAsyncReadyCallback)init_wait_sim_ready,
+                task);
+            return;
+        }
         ctx->step++;
         /* Fall through */
 
@@ -1615,6 +1728,22 @@ interface_initialization_step (GTask *task)
             MM_BASE_SIM_GET_CLASS (self)->load_imsi (
                 self,
                 (GAsyncReadyCallback)init_load_imsi_ready,
+                task);
+            return;
+        }
+        ctx->step++;
+        /* Fall through */
+
+    case INITIALIZATION_STEP_EID:
+        /* EID is meant to be loaded only once during the whole
+         * lifetime of the modem. Therefore, if we already have them loaded,
+         * don't try to load them again. */
+        if (mm_gdbus_sim_get_eid (MM_GDBUS_SIM (self)) == NULL &&
+            MM_BASE_SIM_GET_CLASS (self)->load_eid &&
+            MM_BASE_SIM_GET_CLASS (self)->load_eid_finish) {
+            MM_BASE_SIM_GET_CLASS (self)->load_eid (
+                self,
+                (GAsyncReadyCallback)init_load_eid_ready,
                 task);
             return;
         }
@@ -1714,6 +1843,7 @@ initable_init_async (GAsyncInitable *initable,
 {
     mm_gdbus_sim_set_sim_identifier (MM_GDBUS_SIM (initable), NULL);
     mm_gdbus_sim_set_imsi (MM_GDBUS_SIM (initable), NULL);
+    mm_gdbus_sim_set_eid (MM_GDBUS_SIM (initable), NULL);
     mm_gdbus_sim_set_operator_identifier (MM_GDBUS_SIM (initable), NULL);
     mm_gdbus_sim_set_operator_name (MM_GDBUS_SIM (initable), NULL);
 
@@ -1732,6 +1862,7 @@ mm_base_sim_new (MMBaseModem *modem,
                                 callback,
                                 user_data,
                                 MM_BASE_SIM_MODEM, modem,
+                                "active", TRUE, /* by default always active */
                                 NULL);
 }
 
@@ -1754,6 +1885,19 @@ mm_base_sim_initialize (MMBaseSim *self,
                        callback,
                        user_data);
 }
+
+/*****************************************************************************/
+
+static gchar *
+log_object_build_id (MMLogObject *_self)
+{
+    MMBaseSim *self;
+
+    self = MM_BASE_SIM (_self);
+    return g_strdup_printf ("sim%u", self->priv->dbus_id);
+}
+
+/*****************************************************************************/
 
 static void
 set_property (GObject *object,
@@ -1787,12 +1931,17 @@ set_property (GObject *object,
         g_clear_object (&self->priv->modem);
         self->priv->modem = g_value_dup_object (value);
         if (self->priv->modem) {
+            /* Set owner ID */
+            mm_log_object_set_owner_id (MM_LOG_OBJECT (self), mm_log_object_get_id (MM_LOG_OBJECT (self->priv->modem)));
             /* Bind the modem's connection (which is set when it is exported,
              * and unset when unexported) to the SIM's connection */
             g_object_bind_property (self->priv->modem, MM_BASE_MODEM_CONNECTION,
                                     self, MM_BASE_SIM_CONNECTION,
                                     G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE);
         }
+        break;
+    case PROP_SLOT_NUMBER:
+        self->priv->slot_number = g_value_get_uint (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1818,6 +1967,9 @@ get_property (GObject *object,
     case PROP_MODEM:
         g_value_set_object (value, self->priv->modem);
         break;
+    case PROP_SLOT_NUMBER:
+        g_value_set_uint (value, self->priv->slot_number);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -1827,8 +1979,13 @@ get_property (GObject *object,
 static void
 mm_base_sim_init (MMBaseSim *self)
 {
+    static guint id = 0;
+
     /* Initialize private data */
     self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, MM_TYPE_BASE_SIM, MMBaseSimPrivate);
+
+    /* Each SIM is given a unique id to build its own DBus path */
+    self->priv->dbus_id = id++;
 }
 
 static void
@@ -1863,6 +2020,12 @@ async_initable_iface_init (GAsyncInitableIface *iface)
 {
     iface->init_async = initable_init_async;
     iface->init_finish = initable_init_finish;
+}
+
+static void
+log_object_iface_init (MMLogObjectInterface *iface)
+{
+    iface->build_id = log_object_build_id;
 }
 
 static void
@@ -1920,6 +2083,14 @@ mm_base_sim_class_init (MMBaseSimClass *klass)
                              MM_TYPE_BASE_MODEM,
                              G_PARAM_READWRITE);
     g_object_class_install_property (object_class, PROP_MODEM, properties[PROP_MODEM]);
+
+    properties[PROP_SLOT_NUMBER] =
+        g_param_spec_uint (MM_BASE_SIM_SLOT_NUMBER,
+                           "Slot number",
+                           "The slot number where the SIM is inserted",
+                           0, G_MAXUINT, 0,
+                           G_PARAM_READWRITE);
+    g_object_class_install_property (object_class, PROP_SLOT_NUMBER, properties[PROP_SLOT_NUMBER]);
 
     /* Signals */
     signals[SIGNAL_PIN_LOCK_ENABLED] =

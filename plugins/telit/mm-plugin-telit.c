@@ -22,7 +22,7 @@
 #include <libmm-glib.h>
 
 #include "mm-port-enums-types.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-plugin-telit.h"
 #include "mm-common-telit.h"
@@ -55,7 +55,7 @@ create_modem (MMPlugin *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered Telit modem found...");
+        mm_obj_dbg (self, "QMI-powered Telit modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_new (uid,
                                                           drivers,
                                                           mm_plugin_get_name (self),
@@ -66,7 +66,7 @@ create_modem (MMPlugin *self,
 
 #if defined WITH_MBIM
     if (mm_port_probe_list_has_mbim_port (probes)) {
-        mm_dbg ("MBIM-powered Telit modem found...");
+        mm_obj_dbg (self, "MBIM-powered Telit modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_mbim_telit_new (uid,
                                                                  drivers,
                                                                  mm_plugin_get_name (self),
@@ -87,7 +87,7 @@ create_modem (MMPlugin *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     /* Vendors: Telit */
     static const guint16 vendor_ids[] = { 0x1bc7, 0 };
     static const gchar *vendor_strings[] = { "telit", NULL };
@@ -99,7 +99,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_TELIT,
-                      MM_PLUGIN_NAME,                   "Telit",
+                      MM_PLUGIN_NAME,                   MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,     subsystems,
                       MM_PLUGIN_ALLOWED_VENDOR_IDS,     vendor_ids,
                       MM_PLUGIN_ALLOWED_VENDOR_STRINGS, vendor_strings,

@@ -19,7 +19,7 @@
 
 #include "mm-error-helpers.h"
 #include "mm-serial-parsers.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 /* Clean up the response by removing control characters like <CR><LF> etc */
 static void
@@ -108,16 +108,16 @@ mm_serial_parser_v1_new (void)
 
     parser = g_slice_new (MMSerialParserV1);
 
-    parser->regex_ok = g_regex_new ("\\r\\nOK(\\r\\n)+$", flags, 0, NULL);
+    parser->regex_ok = g_regex_new ("\\r\\nOK(\\r\\n)+", flags, 0, NULL);
     parser->regex_connect = g_regex_new ("\\r\\nCONNECT.*\\r\\n", flags, 0, NULL);
     parser->regex_sms = g_regex_new ("\\r\\n>\\s*$", flags, 0, NULL);
-    parser->regex_cme_error = g_regex_new ("\\r\\n\\+CME ERROR:\\s*(\\d+)\\r\\n$", flags, 0, NULL);
-    parser->regex_cms_error = g_regex_new ("\\r\\n\\+CMS ERROR:\\s*(\\d+)\\r\\n$", flags, 0, NULL);
-    parser->regex_cme_error_str = g_regex_new ("\\r\\n\\+CME ERROR:\\s*([^\\n\\r]+)\\r\\n$", flags, 0, NULL);
-    parser->regex_cms_error_str = g_regex_new ("\\r\\n\\+CMS ERROR:\\s*([^\\n\\r]+)\\r\\n$", flags, 0, NULL);
-    parser->regex_ezx_error = g_regex_new ("\\r\\n\\MODEM ERROR:\\s*(\\d+)\\r\\n$", flags, 0, NULL);
-    parser->regex_unknown_error = g_regex_new ("\\r\\n(ERROR)|(COMMAND NOT SUPPORT)\\r\\n$", flags, 0, NULL);
-    parser->regex_connect_failed = g_regex_new ("\\r\\n(NO CARRIER)|(BUSY)|(NO ANSWER)|(NO DIALTONE)\\r\\n$", flags, 0, NULL);
+    parser->regex_cme_error = g_regex_new ("\\r\\n\\+CME ERROR:\\s*(\\d+)\\r\\n", flags, 0, NULL);
+    parser->regex_cms_error = g_regex_new ("\\r\\n\\+CMS ERROR:\\s*(\\d+)\\r\\n", flags, 0, NULL);
+    parser->regex_cme_error_str = g_regex_new ("\\r\\n\\+CME ERROR:\\s*([^\\n\\r]+)\\r\\n", flags, 0, NULL);
+    parser->regex_cms_error_str = g_regex_new ("\\r\\n\\+CMS ERROR:\\s*([^\\n\\r]+)\\r\\n", flags, 0, NULL);
+    parser->regex_ezx_error = g_regex_new ("\\r\\n\\MODEM ERROR:\\s*(\\d+)\\r\\n", flags, 0, NULL);
+    parser->regex_unknown_error = g_regex_new ("\\r\\n(ERROR)|(COMMAND NOT SUPPORT)\\r\\n", flags, 0, NULL);
+    parser->regex_connect_failed = g_regex_new ("\\r\\n(NO CARRIER)|(BUSY)|(NO ANSWER)|(NO DIALTONE)\\r\\n", flags, 0, NULL);
     /* Samsung Z810 may reply "NA" to report a not-available error */
     parser->regex_na = g_regex_new ("\\r\\nNA\\r\\n", flags, 0, NULL);
 
@@ -161,9 +161,10 @@ mm_serial_parser_v1_add_filter (gpointer data,
 }
 
 gboolean
-mm_serial_parser_v1_parse (gpointer data,
-                           GString *response,
-                           GError **error)
+mm_serial_parser_v1_parse (gpointer   data,
+                           GString   *response,
+                           gpointer   log_object,
+                           GError   **error)
 {
     MMSerialParserV1 *parser = (MMSerialParserV1 *) data;
     GMatchInfo *match_info;
@@ -188,7 +189,7 @@ mm_serial_parser_v1_parse (gpointer data,
                                   response,
                                   &local_error)) {
         g_assert (local_error != NULL);
-        mm_dbg ("Got response filtered in serial port: %s", local_error->message);
+        mm_obj_dbg (log_object, "response filtered in serial port: %s", local_error->message);
         g_propagate_error (error, local_error);
         response_clean (response);
         return TRUE;
@@ -238,7 +239,7 @@ mm_serial_parser_v1_parse (gpointer data,
         if (found) {
             str = g_match_info_fetch (match_info, 1);
             g_assert (str);
-            local_error = mm_mobile_equipment_error_for_code (atoi (str));
+            local_error = mm_mobile_equipment_error_for_code (atoi (str), log_object);
             goto done;
         }
         g_match_info_free (match_info);
@@ -251,7 +252,7 @@ mm_serial_parser_v1_parse (gpointer data,
     if (found) {
         str = g_match_info_fetch (match_info, 1);
         g_assert (str);
-        local_error = mm_mobile_equipment_error_for_code (atoi (str));
+        local_error = mm_mobile_equipment_error_for_code (atoi (str), log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -263,7 +264,7 @@ mm_serial_parser_v1_parse (gpointer data,
     if (found) {
         str = g_match_info_fetch (match_info, 1);
         g_assert (str);
-        local_error = mm_message_error_for_code (atoi (str));
+        local_error = mm_message_error_for_code (atoi (str), log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -275,7 +276,7 @@ mm_serial_parser_v1_parse (gpointer data,
     if (found) {
         str = g_match_info_fetch (match_info, 1);
         g_assert (str);
-        local_error = mm_mobile_equipment_error_for_string (str);
+        local_error = mm_mobile_equipment_error_for_string (str, log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -287,7 +288,7 @@ mm_serial_parser_v1_parse (gpointer data,
     if (found) {
         str = g_match_info_fetch (match_info, 1);
         g_assert (str);
-        local_error = mm_message_error_for_string (str);
+        local_error = mm_message_error_for_string (str, log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -299,7 +300,7 @@ mm_serial_parser_v1_parse (gpointer data,
     if (found) {
         str = g_match_info_fetch (match_info, 1);
         g_assert (str);
-        local_error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_UNKNOWN);
+        local_error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_UNKNOWN, log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -309,7 +310,7 @@ mm_serial_parser_v1_parse (gpointer data,
                                 response->str, response->len,
                                 0, 0, &match_info, NULL);
     if (found) {
-        local_error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_UNKNOWN);
+        local_error = mm_mobile_equipment_error_for_code (MM_MOBILE_EQUIPMENT_ERROR_UNKNOWN, log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -337,7 +338,7 @@ mm_serial_parser_v1_parse (gpointer data,
             code = MM_CONNECTION_ERROR_NO_CARRIER;
         }
 
-        local_error = mm_connection_error_for_code (code);
+        local_error = mm_connection_error_for_code (code, log_object);
         goto done;
     }
     g_match_info_free (match_info);
@@ -361,7 +362,7 @@ done:
         response_clean (response);
 
     if (local_error) {
-        mm_dbg ("Got failure code %d: %s", local_error->code, local_error->message);
+        mm_obj_dbg (log_object, "operation failure: %d (%s)", local_error->code, local_error->message);
         g_propagate_error (error, local_error);
     }
 

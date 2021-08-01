@@ -1,4 +1,3 @@
-
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /*
  * This program is free software; you can redistribute it and/or modify
@@ -34,10 +33,13 @@
 #include "mm-sms-part-3gpp.h"
 #include "mm-base-modem-at.h"
 #include "mm-base-modem.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 
-G_DEFINE_TYPE (MMBaseSms, mm_base_sms, MM_GDBUS_TYPE_SMS_SKELETON)
+static void log_object_iface_init (MMLogObjectInterface *iface);
+
+G_DEFINE_TYPE_EXTENDED (MMBaseSms, mm_base_sms, MM_GDBUS_TYPE_SMS_SKELETON, 0,
+                        G_IMPLEMENT_INTERFACE (MM_TYPE_LOG_OBJECT, log_object_iface_init))
 
 enum {
     PROP_0,
@@ -55,6 +57,8 @@ static GParamSpec *properties[PROP_LAST];
 struct _MMBaseSmsPrivate {
     /* The connection to the system bus */
     GDBusConnection *connection;
+    guint            dbus_id;
+
     /* The modem which owns this SMS */
     MMBaseModem *modem;
     /* The path where the SMS object is exported */
@@ -125,7 +129,7 @@ generate_3gpp_submit_pdus (MMBaseSms *self,
     g_assert (!(text != NULL && data != NULL));
 
     if (text) {
-        split_text = mm_sms_part_3gpp_util_split_text (text, &encoding);
+        split_text = mm_sms_part_3gpp_util_split_text (text, &encoding, self);
         if (!split_text) {
             g_set_error (error,
                          MM_CORE_ERROR,
@@ -174,14 +178,14 @@ generate_3gpp_submit_pdus (MMBaseSms *self,
             if (!split_text[i])
                 break;
             part_text = split_text[i];
-            mm_dbg ("  Processing chunk '%u' of text with '%u' bytes",
-                    i, (guint) strlen (part_text));
+            mm_obj_dbg (self, "  processing chunk '%u' of text with '%u' bytes",
+                        i, (guint) strlen (part_text));
         } else if (split_data) {
             if (!split_data[i])
                 break;
             part_data = split_data[i];
-            mm_dbg ("  Processing chunk '%u' of data with '%u' bytes",
-                    i, part_data->len);
+            mm_obj_dbg (self, "  processing chunk '%u' of data with '%u' bytes",
+                        i, part_data->len);
 
         } else
             g_assert_not_reached ();
@@ -201,11 +205,9 @@ generate_3gpp_submit_pdus (MMBaseSms *self,
             mm_sms_part_set_concat_reference (part, 0); /* We don't set a concat reference here */
             mm_sms_part_set_concat_sequence (part, i + 1);
             mm_sms_part_set_concat_max (part, n_parts);
-
-            mm_dbg ("Created SMS part '%u' for multipart SMS ('%u' parts expected)",
-                    i + 1, n_parts);
+            mm_obj_dbg (self, "created SMS part '%u' for multipart SMS ('%u' parts expected)", i + 1, n_parts);
         } else {
-            mm_dbg ("Created SMS part for singlepart SMS");
+            mm_obj_dbg (self, "created SMS part for singlepart SMS");
         }
 
         /* Add to the list of parts */
@@ -271,14 +273,14 @@ generate_cdma_submit_pdus (MMBaseSms *self,
 
     /* If creating a CDMA SMS part but we don't have a Teleservice ID, we default to WMT */
     if (mm_gdbus_sms_get_teleservice_id (MM_GDBUS_SMS (self)) == MM_SMS_CDMA_TELESERVICE_ID_UNKNOWN) {
-        mm_dbg ("Defaulting to WMT teleservice ID when creating SMS part");
+        mm_obj_dbg (self, "defaulting to WMT teleservice ID when creating SMS part");
         mm_sms_part_set_cdma_teleservice_id (part, MM_SMS_CDMA_TELESERVICE_ID_WMT);
     } else
         mm_sms_part_set_cdma_teleservice_id (part, mm_gdbus_sms_get_teleservice_id (MM_GDBUS_SMS (self)));
 
     mm_sms_part_set_cdma_service_category (part, mm_gdbus_sms_get_service_category (MM_GDBUS_SMS (self)));
 
-    mm_dbg ("Created SMS part for CDMA SMS");
+    mm_obj_dbg (self, "created SMS part for CDMA SMS");
 
     /* Add to the list of parts */
     self->priv->parts = g_list_append (self->priv->parts, part);
@@ -651,10 +653,9 @@ handle_send (MMBaseSms *self,
 void
 mm_base_sms_export (MMBaseSms *self)
 {
-    static guint id = 0;
     gchar *path;
 
-    path = g_strdup_printf (MM_DBUS_SMS_PREFIX "/%d", id++);
+    path = g_strdup_printf (MM_DBUS_SMS_PREFIX "/%d", self->priv->dbus_id);
     g_object_set (self,
                   MM_BASE_SMS_PATH, path,
                   NULL);
@@ -690,9 +691,7 @@ sms_dbus_export (MMBaseSms *self)
                                            self->priv->connection,
                                            self->priv->path,
                                            &error)) {
-        mm_warn ("couldn't export SMS at '%s': '%s'",
-                 self->priv->path,
-                 error->message);
+        mm_obj_warn (self, "couldn't export SMS: %s", error->message);
         g_error_free (error);
     }
 }
@@ -772,12 +771,13 @@ mm_base_sms_get_parts (MMBaseSms *self)
 /*****************************************************************************/
 
 static gboolean
-sms_get_store_or_send_command (MMSmsPart *part,
-                               gboolean text_or_pdu,   /* TRUE for PDU */
-                               gboolean store_or_send, /* TRUE for send */
-                               gchar **out_cmd,
-                               gchar **out_msg_data,
-                               GError **error)
+sms_get_store_or_send_command (MMBaseSms  *self,
+                               MMSmsPart  *part,
+                               gboolean    text_or_pdu,   /* TRUE for PDU */
+                               gboolean    store_or_send, /* TRUE for send */
+                               gchar     **out_cmd,
+                               gchar     **out_msg_data,
+                               GError    **error)
 {
     g_assert (out_cmd != NULL);
     g_assert (out_msg_data != NULL);
@@ -796,7 +796,7 @@ sms_get_store_or_send_command (MMSmsPart *part,
 
         /* AT+CMGW=<length>[, <stat>]<CR> PDU can be entered. <CTRL-Z>/<ESC> */
 
-        pdu = mm_sms_part_3gpp_get_submit_pdu (part, &pdulen, &msgstart, error);
+        pdu = mm_sms_part_3gpp_get_submit_pdu (part, &pdulen, &msgstart, self, error);
         if (!pdu)
             /* 'error' should already be set */
             return FALSE;
@@ -930,10 +930,12 @@ store_ready (MMBaseModem *modem,
 static void
 sms_store_next_part (GTask *task)
 {
+    MMBaseSms *self;
     SmsStoreContext *ctx;
     gchar *cmd;
     GError *error = NULL;
 
+    self = g_task_get_source_object (task);
     ctx = g_task_get_task_data (task);
 
     if (!ctx->current) {
@@ -945,7 +947,8 @@ sms_store_next_part (GTask *task)
 
     g_clear_pointer (&ctx->msg_data, g_free);
 
-    if (!sms_get_store_or_send_command ((MMSmsPart *)ctx->current->data,
+    if (!sms_get_store_or_send_command (self,
+                                        (MMSmsPart *)ctx->current->data,
                                         ctx->use_pdu_mode,
                                         FALSE,
                                         &cmd,
@@ -1153,12 +1156,14 @@ send_from_storage_ready (MMBaseModem *modem,
                          GAsyncResult *res,
                          GTask *task)
 {
+    MMBaseSms *self;
     SmsSendContext *ctx;
     GError *error = NULL;
     const gchar *response;
     gint message_reference;
 
-    ctx = g_task_get_task_data (task);
+    self = g_task_get_source_object (task);
+    ctx  = g_task_get_task_data (task);
 
     response = mm_base_modem_at_command_finish (modem, res, &error);
     if (error) {
@@ -1168,8 +1173,7 @@ send_from_storage_ready (MMBaseModem *modem,
             return;
         }
 
-        mm_dbg ("Couldn't send SMS from storage: '%s'; trying generic send...",
-                error->message);
+        mm_obj_dbg (self, "couldn't send SMS from storage: %s; trying generic send...", error->message);
         g_error_free (error);
 
         ctx->from_storage = FALSE;
@@ -1194,10 +1198,12 @@ send_from_storage_ready (MMBaseModem *modem,
 static void
 sms_send_next_part (GTask *task)
 {
+    MMBaseSms *self;
     SmsSendContext *ctx;
     GError *error = NULL;
     gchar *cmd;
 
+    self = g_task_get_source_object (task);
     ctx = g_task_get_task_data (task);
 
     if (!ctx->current) {
@@ -1225,7 +1231,8 @@ sms_send_next_part (GTask *task)
 
     g_clear_pointer (&ctx->msg_data, g_free);
 
-    if (!sms_get_store_or_send_command ((MMSmsPart *)ctx->current->data,
+    if (!sms_get_store_or_send_command (self,
+                                        (MMSmsPart *)ctx->current->data,
                                         ctx->use_pdu_mode,
                                         TRUE,
                                         &cmd,
@@ -1345,17 +1352,19 @@ delete_part_ready (MMBaseModem *modem,
                    GAsyncResult *res,
                    GTask *task)
 {
+    MMBaseSms *self;
     SmsDeletePartsContext *ctx;
     GError *error = NULL;
 
+    self = g_task_get_source_object (task);
     ctx = g_task_get_task_data (task);
 
     mm_base_modem_at_command_finish (modem, res, &error);
     if (error) {
         ctx->n_failed++;
-        mm_dbg ("Couldn't delete SMS part with index %u: '%s'",
-                mm_sms_part_get_index ((MMSmsPart *)ctx->current->data),
-                error->message);
+        mm_obj_dbg (self, "couldn't delete SMS part with index %u: %s",
+                    mm_sms_part_get_index ((MMSmsPart *)ctx->current->data),
+                    error->message);
         g_error_free (error);
     }
 
@@ -1447,7 +1456,7 @@ sms_delete (MMBaseSms *self,
     g_task_set_task_data (task, ctx, (GDestroyNotify)sms_delete_parts_context_free);
 
     if (mm_base_sms_get_storage (self) == MM_SMS_STORAGE_UNKNOWN) {
-        mm_dbg ("Not removing parts from non-stored SMS");
+        mm_obj_dbg (self, "not removing parts from non-stored SMS");
         g_task_return_boolean (task, TRUE);
         g_object_unref (task);
         return;
@@ -1569,12 +1578,12 @@ assemble_sms (MMBaseSms  *self,
             idx = mm_sms_part_get_concat_sequence ((MMSmsPart *)l->data);
 
             if (idx < 1 || idx > self->priv->max_parts) {
-                mm_warn ("Invalid part index (%u) found, ignoring", idx);
+                mm_obj_warn (self, "invalid part index (%u) found, ignoring", idx);
                 continue;
             }
 
             if (sorted_parts[idx - 1]) {
-                mm_warn ("Duplicate part index (%u) found, ignoring", idx);
+                mm_obj_warn (self, "duplicate part index (%u) found, ignoring", idx);
                 continue;
             }
 
@@ -1723,8 +1732,7 @@ mm_base_sms_multipart_take_part (MMBaseSms *self,
         if (!assemble_sms (self, &inner_error)) {
             /* We DO NOT propagate the error. The part was properly taken
              * so ownership passed to the MMBaseSms object. */
-            mm_warn ("Couldn't assemble SMS: '%s'",
-                     inner_error->message);
+            mm_obj_warn (self, "couldn't assemble SMS: %s", inner_error->message);
             g_error_free (inner_error);
         } else {
             /* Completed AND assembled
@@ -1898,6 +1906,17 @@ mm_base_sms_new_from_properties (MMBaseModem      *modem,
 
 /*****************************************************************************/
 
+static gchar *
+log_object_build_id (MMLogObject *_self)
+{
+    MMBaseSms *self;
+
+    self = MM_BASE_SMS (_self);
+    return g_strdup_printf ("sms%u", self->priv->dbus_id);
+}
+
+/*****************************************************************************/
+
 static void
 set_property (GObject *object,
               guint prop_id,
@@ -1931,6 +1950,8 @@ set_property (GObject *object,
         g_clear_object (&self->priv->modem);
         self->priv->modem = g_value_dup_object (value);
         if (self->priv->modem) {
+            /* Set owner ID */
+            mm_log_object_set_owner_id (MM_LOG_OBJECT (self), mm_log_object_get_id (MM_LOG_OBJECT (self->priv->modem)));
             /* Bind the modem's connection (which is set when it is exported,
              * and unset when unexported) to the SMS's connection */
             g_object_bind_property (self->priv->modem, MM_BASE_MODEM_CONNECTION,
@@ -1989,10 +2010,15 @@ get_property (GObject *object,
 static void
 mm_base_sms_init (MMBaseSms *self)
 {
+    static guint id = 0;
+
     /* Initialize private data */
     self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, MM_TYPE_BASE_SMS, MMBaseSmsPrivate);
     /* Defaults */
     self->priv->max_parts = 1;
+
+    /* Each SMS is given a unique id to build its own DBus path */
+    self->priv->dbus_id = id++;
 }
 
 static void
@@ -2021,6 +2047,12 @@ dispose (GObject *object)
     g_clear_object (&self->priv->modem);
 
     G_OBJECT_CLASS (mm_base_sms_parent_class)->dispose (object);
+}
+
+static void
+log_object_iface_init (MMLogObjectInterface *iface)
+{
+    iface->build_id = log_object_build_id;
 }
 
 static void

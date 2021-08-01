@@ -24,11 +24,12 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
+#include "mm-broadband-modem-mbim.h"
 #include "mm-modem-helpers-mbim.h"
 #include "mm-iface-modem-messaging.h"
 #include "mm-sms-mbim.h"
 #include "mm-base-modem.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-sms-part-3gpp.h"
 
 G_DEFINE_TYPE (MMSmsMbim, mm_sms_mbim, MM_TYPE_BASE_SMS)
@@ -51,7 +52,7 @@ peek_device (gpointer self,
     if (o_device) {
         MMPortMbim *port;
 
-        port = mm_base_modem_peek_port_mbim (modem);
+        port = mm_broadband_modem_mbim_peek_port_mbim (MM_BROADBAND_MODEM_MBIM (modem));
         if (!port) {
             g_task_report_new_error (self,
                                      callback,
@@ -138,6 +139,7 @@ sms_send_set_ready (MbimDevice *device,
 static void
 sms_send_next_part (GTask *task)
 {
+    MMSmsMbim *self;
     SmsSendContext *ctx;
     MbimMessage *message;
     guint8 *pdu;
@@ -146,7 +148,9 @@ sms_send_next_part (GTask *task)
     GError *error = NULL;
     MbimSmsPduSendRecord send_record;
 
+    self = g_task_get_source_object (task);
     ctx = g_task_get_task_data (task);
+
     if (!ctx->current) {
         /* Done we are */
         g_task_return_boolean (task, TRUE);
@@ -155,7 +159,7 @@ sms_send_next_part (GTask *task)
     }
 
     /* Get PDU */
-    pdu = mm_sms_part_3gpp_get_submit_pdu ((MMSmsPart *)ctx->current->data, &pdulen, &msgstart, &error);
+    pdu = mm_sms_part_3gpp_get_submit_pdu ((MMSmsPart *)ctx->current->data, &pdulen, &msgstart, self, &error);
     if (!pdu) {
         g_task_return_error (task, error);
         g_object_unref (task);
@@ -237,11 +241,14 @@ sms_delete_set_ready (MbimDevice *device,
                       GAsyncResult *res,
                       GTask *task)
 {
+    MMSmsMbim *self;
     SmsDeletePartsContext *ctx;
     MbimMessage *response;
     GError *error = NULL;
 
+    self = g_task_get_source_object (task);
     ctx = g_task_get_task_data (task);
+
     response = mbim_device_command_finish (device, res, &error);
     if (response &&
         mbim_message_response_get_result (response, MBIM_MESSAGE_TYPE_COMMAND_DONE, &error))
@@ -252,9 +259,9 @@ sms_delete_set_ready (MbimDevice *device,
 
     if (error) {
         ctx->n_failed++;
-        mm_dbg ("Couldn't delete SMS part with index %u: '%s'",
-                mm_sms_part_get_index ((MMSmsPart *)ctx->current->data),
-                error->message);
+        mm_obj_dbg (self, "couldn't delete SMS part with index %u: %s",
+                    mm_sms_part_get_index ((MMSmsPart *)ctx->current->data),
+                    error->message);
         g_error_free (error);
     }
 

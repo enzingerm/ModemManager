@@ -57,6 +57,7 @@ static SectionInfo section_infos[] = {
     [MMC_S_MODEM_SIGNAL_GSM]        = { "GSM"                },
     [MMC_S_MODEM_SIGNAL_UMTS]       = { "UMTS"               },
     [MMC_S_MODEM_SIGNAL_LTE]        = { "LTE"                },
+    [MMC_S_MODEM_SIGNAL_5G]         = { "5G"                 },
     [MMC_S_MODEM_OMA]               = { "OMA"                },
     [MMC_S_MODEM_OMA_CURRENT]       = { "Current session"    },
     [MMC_S_MODEM_OMA_PENDING]       = { "Pending sessions"   },
@@ -93,7 +94,7 @@ typedef struct {
 } FieldInfo;
 
 static FieldInfo field_infos[] = {
-    [MMC_F_GENERAL_DBUS_PATH]                 = { "modem.dbus-path",                                 "dbus path",                MMC_S_MODEM_GENERAL,           },
+    [MMC_F_GENERAL_DBUS_PATH]                 = { "modem.dbus-path",                                 "path",                     MMC_S_MODEM_GENERAL,           },
     [MMC_F_GENERAL_DEVICE_ID]                 = { "modem.generic.device-identifier",                 "device id",                MMC_S_MODEM_GENERAL,           },
     [MMC_F_HARDWARE_MANUFACTURER]             = { "modem.generic.manufacturer",                      "manufacturer",             MMC_S_MODEM_HARDWARE,          },
     [MMC_F_HARDWARE_MODEL]                    = { "modem.generic.model",                             "model",                    MMC_S_MODEM_HARDWARE,          },
@@ -130,7 +131,7 @@ static FieldInfo field_infos[] = {
     [MMC_F_3GPP_REGISTRATION]                 = { "modem.3gpp.registration-state",                   "registration",             MMC_S_MODEM_3GPP,              },
     [MMC_F_3GPP_PCO]                          = { "modem.3gpp.pco",                                  "pco",                      MMC_S_MODEM_3GPP,              },
     [MMC_F_3GPP_EPS_UE_MODE]                  = { "modem.3gpp.eps.ue-mode-operation",                "ue mode of operation",     MMC_S_MODEM_3GPP_EPS,          },
-    [MMC_F_3GPP_EPS_INITIAL_BEARER_PATH]      = { "modem.3gpp.eps.initial-bearer.dbus-path",         "initial bearer dbus path", MMC_S_MODEM_3GPP_EPS,          },
+    [MMC_F_3GPP_EPS_INITIAL_BEARER_PATH]      = { "modem.3gpp.eps.initial-bearer.dbus-path",         "initial bearer path",      MMC_S_MODEM_3GPP_EPS,          },
     [MMC_F_3GPP_EPS_BEARER_SETTINGS_APN]      = { "modem.3gpp.eps.initial-bearer.settings.apn",      "initial bearer apn",       MMC_S_MODEM_3GPP_EPS,          },
     [MMC_F_3GPP_EPS_BEARER_SETTINGS_IP_TYPE]  = { "modem.3gpp.eps.initial-bearer.settings.ip-type",  "initial bearer ip type",   MMC_S_MODEM_3GPP_EPS,          },
     [MMC_F_3GPP_EPS_BEARER_SETTINGS_USER]     = { "modem.3gpp.eps.initial-bearer.settings.user",     "initial bearer user",      MMC_S_MODEM_3GPP_EPS,          },
@@ -146,8 +147,10 @@ static FieldInfo field_infos[] = {
     [MMC_F_CDMA_REGISTRATION_CDMA1X]          = { "modem.cdma.cdma1x-registration-state",            "registration cdma1x",      MMC_S_MODEM_CDMA,              },
     [MMC_F_CDMA_REGISTRATION_EVDO]            = { "modem.cdma.evdo-registration-state",              "registration evdo",        MMC_S_MODEM_CDMA,              },
     [MMC_F_CDMA_ACTIVATION]                   = { "modem.cdma.activation-state",                     "activation",               MMC_S_MODEM_CDMA,              },
-    [MMC_F_SIM_PATH]                          = { "modem.generic.sim",                               "dbus path",                MMC_S_MODEM_SIM,               },
-    [MMC_F_BEARER_PATHS]                      = { "modem.generic.bearers",                           "dbus path",                MMC_S_MODEM_BEARER,            },
+    [MMC_F_SIM_PATH]                          = { "modem.generic.sim",                               "primary sim path",         MMC_S_MODEM_SIM,               },
+    [MMC_F_SIM_PRIMARY_SLOT]                  = { "modem.generic.primary-sim-slot",                  NULL,                       MMC_S_MODEM_SIM,               },
+    [MMC_F_SIM_SLOT_PATHS]                    = { "modem.generic.sim-slots",                         "sim slot paths",           MMC_S_MODEM_SIM,               },
+    [MMC_F_BEARER_PATHS]                      = { "modem.generic.bearers",                           "paths",                    MMC_S_MODEM_BEARER,            },
     [MMC_F_TIME_CURRENT]                      = { "modem.time.current",                              "current",                  MMC_S_MODEM_TIME,              },
     [MMC_F_TIMEZONE_CURRENT]                  = { "modem.timezone.current",                          "current",                  MMC_S_MODEM_TIMEZONE,          },
     [MMC_F_TIMEZONE_DST_OFFSET]               = { "modem.time.dst-offset",                           "dst offset",               MMC_S_MODEM_TIMEZONE,          },
@@ -169,6 +172,9 @@ static FieldInfo field_infos[] = {
     [MMC_F_SIGNAL_LTE_RSRQ]                   = { "modem.signal.lte.rsrq",                           "rsrq",                     MMC_S_MODEM_SIGNAL_LTE,        },
     [MMC_F_SIGNAL_LTE_RSRP]                   = { "modem.signal.lte.rsrp",                           "rsrp",                     MMC_S_MODEM_SIGNAL_LTE,        },
     [MMC_F_SIGNAL_LTE_SNR]                    = { "modem.signal.lte.snr",                            "s/n",                      MMC_S_MODEM_SIGNAL_LTE,        },
+    [MMC_F_SIGNAL_5G_RSRQ]                    = { "modem.signal.5g.rsrq",                            "rsrq",                     MMC_S_MODEM_SIGNAL_5G,         },
+    [MMC_F_SIGNAL_5G_RSRP]                    = { "modem.signal.5g.rsrp",                            "rsrp",                     MMC_S_MODEM_SIGNAL_5G,         },
+    [MMC_F_SIGNAL_5G_SNR]                     = { "modem.signal.5g.snr",                             "s/n",                      MMC_S_MODEM_SIGNAL_5G,         },
     [MMC_F_OMA_FEATURES]                      = { "modem.oma.features",                              "features",                 MMC_S_MODEM_OMA,               },
     [MMC_F_OMA_CURRENT_TYPE]                  = { "modem.oma.current.type",                          "type",                     MMC_S_MODEM_OMA_CURRENT,       },
     [MMC_F_OMA_CURRENT_STATE]                 = { "modem.oma.current.state",                         "state",                    MMC_S_MODEM_OMA_CURRENT,       },
@@ -198,7 +204,7 @@ static FieldInfo field_infos[] = {
     [MMC_F_FIRMWARE_VERSION]                  = { "modem.firmware.version",                          "version",                  MMC_S_MODEM_FIRMWARE,          },
     [MMC_F_FIRMWARE_FASTBOOT_AT]              = { "modem.firmware.fastboot.at",                      "at command",               MMC_S_MODEM_FIRMWARE_FASTBOOT, },
     [MMC_F_VOICE_EMERGENCY_ONLY]              = { "modem.voice.emergency-only",                      "emergency only",           MMC_S_MODEM_VOICE,             },
-    [MMC_F_BEARER_GENERAL_DBUS_PATH]          = { "bearer.dbus-path",                                "dbus path",                MMC_S_BEARER_GENERAL,          },
+    [MMC_F_BEARER_GENERAL_DBUS_PATH]          = { "bearer.dbus-path",                                "path",                     MMC_S_BEARER_GENERAL,          },
     [MMC_F_BEARER_GENERAL_TYPE]               = { "bearer.type",                                     "type",                     MMC_S_BEARER_GENERAL,          },
     [MMC_F_BEARER_STATUS_CONNECTED]           = { "bearer.status.connected",                         "connected",                MMC_S_BEARER_STATUS,           },
     [MMC_F_BEARER_STATUS_SUSPENDED]           = { "bearer.status.suspended",                         "suspended",                MMC_S_BEARER_STATUS,           },
@@ -207,6 +213,7 @@ static FieldInfo field_infos[] = {
     [MMC_F_BEARER_PROPERTIES_APN]             = { "bearer.properties.apn",                           "apn",                      MMC_S_BEARER_PROPERTIES,       },
     [MMC_F_BEARER_PROPERTIES_ROAMING]         = { "bearer.properties.roaming",                       "roaming",                  MMC_S_BEARER_PROPERTIES,       },
     [MMC_F_BEARER_PROPERTIES_IP_TYPE]         = { "bearer.properties.ip-type",                       "ip type",                  MMC_S_BEARER_PROPERTIES,       },
+    [MMC_F_BEARER_PROPERTIES_ALLOWED_AUTH]    = { "bearer.properties.allowed-auth",                  "allowed-auth",             MMC_S_BEARER_PROPERTIES,       },
     [MMC_F_BEARER_PROPERTIES_USER]            = { "bearer.properties.user",                          "user",                     MMC_S_BEARER_PROPERTIES,       },
     [MMC_F_BEARER_PROPERTIES_PASSWORD]        = { "bearer.properties.password",                      "password",                 MMC_S_BEARER_PROPERTIES,       },
     [MMC_F_BEARER_PROPERTIES_NUMBER]          = { "bearer.properties.number",                        "number",                   MMC_S_BEARER_PROPERTIES,       },
@@ -226,7 +233,12 @@ static FieldInfo field_infos[] = {
     [MMC_F_BEARER_STATS_DURATION]             = { "bearer.stats.duration",                           "duration",                 MMC_S_BEARER_STATS,            },
     [MMC_F_BEARER_STATS_BYTES_RX]             = { "bearer.stats.bytes-rx",                           "bytes rx",                 MMC_S_BEARER_STATS,            },
     [MMC_F_BEARER_STATS_BYTES_TX]             = { "bearer.stats.bytes-tx",                           "bytes tx",                 MMC_S_BEARER_STATS,            },
-    [MMC_F_CALL_GENERAL_DBUS_PATH]            = { "call.dbus-path",                                  "dbus path",                MMC_S_CALL_GENERAL,            },
+    [MMC_F_BEARER_STATS_ATTEMPTS]             = { "bearer.stats.attempts",                           "attempts",                 MMC_S_BEARER_STATS,            },
+    [MMC_F_BEARER_STATS_FAILED_ATTEMPTS]      = { "bearer.stats.failed-attempts",                    "attempts",                 MMC_S_BEARER_STATS,            },
+    [MMC_F_BEARER_STATS_TOTAL_DURATION]       = { "bearer.stats.total-duration",                     "total-duration",           MMC_S_BEARER_STATS,            },
+    [MMC_F_BEARER_STATS_TOTAL_BYTES_RX]       = { "bearer.stats.total-bytes-rx",                     "total-bytes rx",           MMC_S_BEARER_STATS,            },
+    [MMC_F_BEARER_STATS_TOTAL_BYTES_TX]       = { "bearer.stats.total-bytes-tx",                     "total-bytes tx",           MMC_S_BEARER_STATS,            },
+    [MMC_F_CALL_GENERAL_DBUS_PATH]            = { "call.dbus-path",                                  "path",                     MMC_S_CALL_GENERAL,            },
     [MMC_F_CALL_PROPERTIES_NUMBER]            = { "call.properties.number",                          "number",                   MMC_S_CALL_PROPERTIES,         },
     [MMC_F_CALL_PROPERTIES_DIRECTION]         = { "call.properties.direction",                       "direction",                MMC_S_CALL_PROPERTIES,         },
     [MMC_F_CALL_PROPERTIES_MULTIPARTY]        = { "call.properties.multiparty",                      "multiparty",               MMC_S_CALL_PROPERTIES,         },
@@ -236,7 +248,7 @@ static FieldInfo field_infos[] = {
     [MMC_F_CALL_AUDIO_FORMAT_ENCODING]        = { "call.audio-format.encoding",                      "encoding",                 MMC_S_CALL_AUDIO_FORMAT,       },
     [MMC_F_CALL_AUDIO_FORMAT_RESOLUTION]      = { "call.audio-format.resolution",                    "resolution",               MMC_S_CALL_AUDIO_FORMAT,       },
     [MMC_F_CALL_AUDIO_FORMAT_RATE]            = { "call.audio-format.rate",                          "rate",                     MMC_S_CALL_AUDIO_FORMAT,       },
-    [MMC_F_SMS_GENERAL_DBUS_PATH]             = { "sms.dbus-path",                                   "dbus path",                MMC_S_SMS_GENERAL,             },
+    [MMC_F_SMS_GENERAL_DBUS_PATH]             = { "sms.dbus-path",                                   "path",                     MMC_S_SMS_GENERAL,             },
     [MMC_F_SMS_CONTENT_NUMBER]                = { "sms.content.number",                              "number",                   MMC_S_SMS_CONTENT,             },
     [MMC_F_SMS_CONTENT_TEXT]                  = { "sms.content.text",                                "text",                     MMC_S_SMS_CONTENT,             },
     [MMC_F_SMS_CONTENT_DATA]                  = { "sms.content.data",                                "data",                     MMC_S_SMS_CONTENT,             },
@@ -253,9 +265,11 @@ static FieldInfo field_infos[] = {
     [MMC_F_SMS_PROPERTIES_TIMESTAMP]          = { "sms.properties.timestamp",                        "timestamp",                MMC_S_SMS_PROPERTIES,          },
     [MMC_F_SMS_PROPERTIES_DELIVERY_STATE]     = { "sms.properties.delivery-state",                   "delivery state",           MMC_S_SMS_PROPERTIES,          },
     [MMC_F_SMS_PROPERTIES_DISCH_TIMESTAMP]    = { "sms.properties.discharge-timestamp",              "discharge timestamp",      MMC_S_SMS_PROPERTIES,          },
-    [MMC_F_SIM_GENERAL_DBUS_PATH]             = { "sim.dbus-path",                                   "dbus path",                MMC_S_SIM_GENERAL,             },
+    [MMC_F_SIM_GENERAL_DBUS_PATH]             = { "sim.dbus-path",                                   "path",                     MMC_S_SIM_GENERAL,             },
+    [MMC_F_SIM_PROPERTIES_ACTIVE]             = { "sim.properties.active",                           "active",                   MMC_S_SIM_PROPERTIES,          },
     [MMC_F_SIM_PROPERTIES_IMSI]               = { "sim.properties.imsi",                             "imsi",                     MMC_S_SIM_PROPERTIES,          },
     [MMC_F_SIM_PROPERTIES_ICCID]              = { "sim.properties.iccid",                            "iccid",                    MMC_S_SIM_PROPERTIES,          },
+    [MMC_F_SIM_PROPERTIES_EID]                = { "sim.properties.eid",                              "eid",                      MMC_S_SIM_PROPERTIES,          },
     [MMC_F_SIM_PROPERTIES_OPERATOR_ID]        = { "sim.properties.operator-code",                    "operator id",              MMC_S_SIM_PROPERTIES,          },
     [MMC_F_SIM_PROPERTIES_OPERATOR_NAME]      = { "sim.properties.operator-name",                    "operator name",            MMC_S_SIM_PROPERTIES,          },
     [MMC_F_SIM_PROPERTIES_EMERGENCY_NUMBERS]  = { "sim.properties.emergency-numbers",                "emergency numbers",        MMC_S_SIM_PROPERTIES,          },
@@ -556,6 +570,37 @@ mmcli_output_state (MMModemState             state,
                                  (state == MM_MODEM_STATE_FAILED) ?
                                  g_strdup (mm_modem_state_failed_reason_get_string (reason)) :
                                  NULL);
+}
+
+/******************************************************************************/
+/* (Custom) SIM slots output */
+
+void
+mmcli_output_sim_slots (gchar **sim_slot_paths,
+                        guint   primary_sim_slot)
+{
+    guint i;
+
+    if (selected_type != MMC_OUTPUT_TYPE_HUMAN || !sim_slot_paths) {
+        mmcli_output_string_take       (MMC_F_SIM_PRIMARY_SLOT, primary_sim_slot ? g_strdup_printf ("%u", primary_sim_slot) : NULL);
+        mmcli_output_string_array_take (MMC_F_SIM_SLOT_PATHS, sim_slot_paths ? sim_slot_paths : NULL, TRUE);
+        return;
+    }
+
+    /* Include SIM slot number in each item */
+    for (i = 0; sim_slot_paths[i]; i++) {
+        gchar *aux;
+        guint  slot_number = i + 1;
+
+        aux = g_strdup_printf ("slot %u: %s%s",
+                               slot_number,
+                               g_str_equal (sim_slot_paths[i], "/") ? "none" : sim_slot_paths[i],
+                               (primary_sim_slot == slot_number) ? " (active)" : "");
+        g_free (sim_slot_paths[i]);
+        sim_slot_paths[i] = aux;
+    }
+
+    mmcli_output_string_array_take (MMC_F_SIM_SLOT_PATHS, sim_slot_paths, TRUE);
 }
 
 /******************************************************************************/
@@ -1081,6 +1126,49 @@ dump_output_list_keyvalue (MmcF field)
 /******************************************************************************/
 /* JSON-friendly output */
 
+static gchar *
+json_strescape (const gchar *str)
+{
+    const gchar *p;
+    const gchar *end;
+    GString *output;
+    gsize len;
+
+    len = strlen (str);
+    end = str + len;
+    output = g_string_sized_new (len);
+
+    for (p = str; p < end; p++) {
+        if (*p == '\\' || *p == '"') {
+            g_string_append_c (output, '\\');
+            g_string_append_c (output, *p);
+        } else if ((*p > 0 && *p < 0x1f) || *p == 0x7f) {
+            switch (*p) {
+                case '\b':
+                    g_string_append (output, "\\b");
+                    break;
+                case '\f':
+                    g_string_append (output, "\\f");
+                    break;
+                case '\n':
+                    g_string_append (output, "\\n");
+                    break;
+                case '\r':
+                    g_string_append (output, "\\r");
+                    break;
+                case '\t':
+                    g_string_append (output, "\\t");
+                    break;
+                default:
+                    g_string_append_printf (output, "\\u00%02x", (guint)*p);
+                    break;
+            }
+        } else
+            g_string_append_c (output, *p);
+    }
+    return g_string_free (output, FALSE);
+}
+
 static gint
 list_sort_by_keys (const OutputItem *item_a,
                    const OutputItem *item_b)
@@ -1140,7 +1228,7 @@ dump_output_json (void)
             gchar            *escaped = NULL;
 
             if (single->value)
-                escaped = g_strescape (single->value, "\v");
+                escaped = json_strescape (single->value);
 
             g_print ("\"%s\":\"%s\"", current_path[cur_dlen], escaped ? escaped : "--");
             g_free (escaped);
@@ -1154,7 +1242,7 @@ dump_output_json (void)
             for (i = 0; i < n; i++) {
                 gchar *escaped;
 
-                escaped = g_strescape (multiple->values[i], "\v");
+                escaped = json_strescape (multiple->values[i]);
                 g_print("\"%s\"", escaped);
                 if (i < n - 1)
                     g_print(",");

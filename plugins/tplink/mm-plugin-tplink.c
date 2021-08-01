@@ -20,7 +20,7 @@
 #include <libmm-glib.h>
 
 #include "mm-port-enums-types.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-plugin-tplink.h"
 #include "mm-broadband-modem.h"
 
@@ -46,7 +46,7 @@ create_modem (MMPlugin     *self,
 {
 #if defined WITH_QMI
     if (mm_port_probe_list_has_qmi_port (probes)) {
-        mm_dbg ("QMI-powered TP-Link modem found...");
+        mm_obj_dbg (self, "QMI-powered TP-Link modem found...");
         return MM_BASE_MODEM (mm_broadband_modem_qmi_new (uid,
                                                           drivers,
                                                           mm_plugin_get_name (self),
@@ -67,12 +67,12 @@ create_modem (MMPlugin     *self,
 G_MODULE_EXPORT MMPlugin *
 mm_plugin_create (void)
 {
-    static const gchar *subsystems[] = { "tty", "net", "usb", NULL };
+    static const gchar *subsystems[] = { "tty", "net", "usbmisc", NULL };
     static const guint16 vendor_ids[] = { 0x2357, 0 };
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_TPLINK,
-                      MM_PLUGIN_NAME,               "TP-Link",
+                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_VENDOR_IDS, vendor_ids,
                       MM_PLUGIN_ALLOWED_AT,         TRUE,

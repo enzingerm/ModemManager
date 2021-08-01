@@ -27,7 +27,7 @@
 #include <ModemManager.h>
 #include "mm-base-modem-at.h"
 #include "mm-broadband-bearer-huawei.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-huawei.h"
 #include "mm-daemon-enums-types.h"
@@ -37,8 +37,6 @@ G_DEFINE_TYPE (MMBroadbandBearerHuawei, mm_broadband_bearer_huawei, MM_TYPE_BROA
 struct _MMBroadbandBearerHuaweiPrivate {
     gpointer connect_pending;
     gpointer disconnect_pending;
-    /* Tag for the post task for network-initiated disconnect */
-    guint network_disconnect_pending_id;
 };
 
 /*****************************************************************************/
@@ -175,7 +173,7 @@ connect_dhcp_check_ready (MMBaseModem *modem,
             g_free (strarr[0]);
             g_free (strarr[1]);
         } else {
-            mm_dbg ("Unexpected response to ^DHCP command: %s", error->message);
+            mm_obj_dbg (self, "unexpected response to ^DHCP command: %s", error->message);
         }
     }
 
@@ -233,8 +231,8 @@ connect_ndisstatqry_check_ready (MMBaseModem *modem,
                                                &ipv6_connected,
                                                &error)) {
         ctx->failed_ndisstatqry_count++;
-        mm_dbg ("Unexpected response to ^NDISSTATQRY command: %s (Attempts so far: %u)",
-                error->message, ctx->failed_ndisstatqry_count);
+        mm_obj_dbg (self, "unexpected response to ^NDISSTATQRY command: %s (%u attempts so far)",
+                    error->message, ctx->failed_ndisstatqry_count);
         g_error_free (error);
     }
 
@@ -329,7 +327,7 @@ connect_3gpp_context_step (GTask *task)
             mm_base_modem_at_command_full (ctx->modem,
                                            ctx->primary,
                                            "^NDISDUP=1,0",
-                                           3,
+                                           MM_BASE_BEARER_DEFAULT_DISCONNECTION_TIMEOUT,
                                            FALSE,
                                            FALSE,
                                            NULL,
@@ -342,11 +340,6 @@ connect_3gpp_context_step (GTask *task)
         return;
     }
 
-    /* Network-initiated disconnect should not be outstanding at this point,
-     * because it interferes with the connect attempt.
-     */
-    g_assert (self->priv->network_disconnect_pending_id == 0);
-
     switch (ctx->step) {
     case CONNECT_3GPP_CONTEXT_STEP_FIRST: {
         MMBearerIpFamily ip_family;
@@ -358,8 +351,7 @@ connect_3gpp_context_step (GTask *task)
 
             ip_family = mm_base_bearer_get_default_ip_family (MM_BASE_BEARER (self));
             ip_family_str = mm_bearer_ip_family_build_string_from_mask (ip_family);
-            mm_dbg ("No specific IP family requested, defaulting to %s",
-                    ip_family_str);
+            mm_obj_dbg (self, "no specific IP family requested, defaulting to %s", ip_family_str);
             g_free (ip_family_str);
         }
 
@@ -399,17 +391,17 @@ connect_3gpp_context_step (GTask *task)
         if (!user && !passwd)
             command = g_strdup_printf ("AT^NDISDUP=1,1,\"%s\"",
                                        apn == NULL ? "" : apn);
-        else if (encoded_auth == MM_BEARER_HUAWEI_AUTH_NONE)
-            command = g_strdup_printf ("AT^NDISDUP=1,1,\"%s\",\"%s\",\"%s\"",
-                                       apn == NULL ? "" : apn,
-                                       user == NULL ? "" : user,
-                                       passwd == NULL ? "" : passwd);
-        else
+        else {
+            if (encoded_auth == MM_BEARER_HUAWEI_AUTH_NONE) {
+                encoded_auth = MM_BEARER_HUAWEI_AUTH_CHAP;
+                mm_obj_dbg (self, "using default (CHAP) authentication method");
+            }
             command = g_strdup_printf ("AT^NDISDUP=1,1,\"%s\",\"%s\",\"%s\",%d",
                                        apn == NULL ? "" : apn,
                                        user == NULL ? "" : user,
                                        passwd == NULL ? "" : passwd,
                                        encoded_auth);
+        }
 
         mm_base_modem_at_command_full (ctx->modem,
                                        ctx->primary,
@@ -425,11 +417,11 @@ connect_3gpp_context_step (GTask *task)
     }
 
     case CONNECT_3GPP_CONTEXT_STEP_NDISSTATQRY:
-        /* Wait for dial up timeout, retries for 60 times
-         * (1s between the retries, so it means 1 minute).
+        /* Wait for dial up timeout, retries for 180 times
+         * (1s between the retries, so it means 3 minutes).
          * If too many retries, failed
          */
-        if (ctx->check_count > 60) {
+        if (ctx->check_count > MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT) {
             /* Clear context */
             self->priv->connect_pending = NULL;
             g_task_return_new_error (task,
@@ -633,8 +625,8 @@ disconnect_ndisstatqry_check_ready (MMBaseModem *modem,
                                                &ipv6_connected,
                                                &error)) {
         ctx->failed_ndisstatqry_count++;
-        mm_dbg ("Unexpected response to ^NDISSTATQRY command: %s (Attempts so far: %u)",
-                error->message, ctx->failed_ndisstatqry_count);
+        mm_obj_dbg (self, "unexpected response to ^NDISSTATQRY command: %s (%u attempts so far)",
+                    error->message, ctx->failed_ndisstatqry_count);
         g_error_free (error);
     }
 
@@ -659,7 +651,6 @@ disconnect_ndisdup_ready (MMBaseModem *modem,
 {
     GTask *task;
     Disconnect3gppContext *ctx;
-    GError *error = NULL;
 
     task = self->priv->disconnect_pending;
     g_assert (task != NULL);
@@ -669,13 +660,11 @@ disconnect_ndisdup_ready (MMBaseModem *modem,
     /* Balance refcount */
     g_object_unref (self);
 
-    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
-        /* Clear task */
-        self->priv->disconnect_pending = NULL;
-        g_task_return_error (task, error);
-        g_object_unref (task);
-        return;
-    }
+    /* Running NDISDUP=1,0 on an already disconnected bearer/context will
+     * return ERROR! Ignore errors in the NDISDUP disconnection command,
+     * because we're anyway going to check the bearer/context status
+     * afterwards.  */
+    mm_base_modem_at_command_full_finish (modem, res, NULL);
 
     /* Go to next step */
     ctx->step++;
@@ -695,15 +684,6 @@ disconnect_3gpp_context_step (GTask *task)
     case DISCONNECT_3GPP_CONTEXT_STEP_FIRST:
         /* Store the task */
         self->priv->disconnect_pending = task;
-
-        /* We ignore any pending network-initiated disconnection in order to prevent it
-         * from interfering with the client-initiated disconnection, as we would like to
-         * proceed with the latter anyway. */
-        if (self->priv->network_disconnect_pending_id != 0) {
-            g_source_remove (self->priv->network_disconnect_pending_id);
-            self->priv->network_disconnect_pending_id = 0;
-        }
-
         ctx->step++;
         /* fall through */
 
@@ -721,7 +701,7 @@ disconnect_3gpp_context_step (GTask *task)
 
     case DISCONNECT_3GPP_CONTEXT_STEP_NDISSTATQRY:
         /* If too many retries (1s of wait between the retries), failed */
-        if (ctx->check_count > 60) {
+        if (ctx->check_count > MM_BASE_BEARER_DEFAULT_DISCONNECTION_TIMEOUT) {
             /* Clear task */
             self->priv->disconnect_pending = NULL;
             g_task_return_new_error (task,
@@ -805,18 +785,6 @@ disconnect_3gpp (MMBroadbandBearer *_self,
 
 /*****************************************************************************/
 
-static gboolean
-network_disconnect_3gpp_delayed (MMBroadbandBearerHuawei *self)
-{
-    mm_dbg ("Disconnect bearer '%s' on network request.",
-            mm_base_bearer_get_path (MM_BASE_BEARER (self)));
-
-    self->priv->network_disconnect_pending_id = 0;
-    mm_base_bearer_report_connection_status (MM_BASE_BEARER (self),
-                                             MM_BEARER_CONNECTION_STATUS_DISCONNECTED);
-    return G_SOURCE_REMOVE;
-}
-
 static void
 report_connection_status (MMBaseBearer *bearer,
                           MMBearerConnectionStatus status)
@@ -833,30 +801,11 @@ report_connection_status (MMBaseBearer *bearer,
     if (self->priv->connect_pending || self->priv->disconnect_pending)
         return;
 
-    mm_dbg ("Received spontaneous ^NDISSTAT (%s)",
-            mm_bearer_connection_status_get_string (status));
+    mm_obj_dbg (self, "received spontaneous ^NDISSTAT (%s)", mm_bearer_connection_status_get_string (status));
 
     /* Ignore 'CONNECTED' */
     if (status == MM_BEARER_CONNECTION_STATUS_CONNECTED)
         return;
-
-    /* We already use ^NDISSTATQRY? to poll the connection status, so only
-     * handle network-initiated disconnection here. */
-    if (status == MM_BEARER_CONNECTION_STATUS_DISCONNECTING) {
-        /* MM_BEARER_CONNECTION_STATUS_DISCONNECTING is used to indicate that the
-         * reporting of disconnection should be delayed. See MMBroadbandModemHuawei's
-         * bearer_report_connection_status for details. */
-        if (mm_base_bearer_get_status (bearer) == MM_BEARER_STATUS_CONNECTED &&
-            self->priv->network_disconnect_pending_id == 0) {
-            mm_dbg ("Delay network-initiated disconnection of bearer '%s'",
-                    mm_base_bearer_get_path (MM_BASE_BEARER (self)));
-            self->priv->network_disconnect_pending_id = (g_timeout_add_seconds (
-                                                             4,
-                                                             (GSourceFunc) network_disconnect_3gpp_delayed,
-                                                             self));
-        }
-        return;
-    }
 
     /* Report disconnected right away */
     MM_BASE_BEARER_CLASS (mm_broadband_bearer_huawei_parent_class)->report_connection_status (
@@ -884,19 +833,6 @@ mm_broadband_bearer_huawei_new_finish (GAsyncResult *res,
     mm_base_bearer_export (MM_BASE_BEARER (bearer));
 
     return MM_BASE_BEARER (bearer);
-}
-
-static void
-dispose (GObject *object)
-{
-    MMBroadbandBearerHuawei *self = MM_BROADBAND_BEARER_HUAWEI (object);
-
-    if (self->priv->network_disconnect_pending_id != 0) {
-        g_source_remove (self->priv->network_disconnect_pending_id);
-        self->priv->network_disconnect_pending_id = 0;
-    }
-
-    G_OBJECT_CLASS (mm_broadband_bearer_huawei_parent_class)->dispose (object);
 }
 
 void
@@ -934,8 +870,6 @@ mm_broadband_bearer_huawei_class_init (MMBroadbandBearerHuaweiClass *klass)
     MMBroadbandBearerClass *broadband_bearer_class = MM_BROADBAND_BEARER_CLASS (klass);
 
     g_type_class_add_private (object_class, sizeof (MMBroadbandBearerHuaweiPrivate));
-
-    object_class->dispose = dispose;
 
     base_bearer_class->report_connection_status = report_connection_status;
     base_bearer_class->load_connection_status = NULL;

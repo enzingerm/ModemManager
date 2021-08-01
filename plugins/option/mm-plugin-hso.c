@@ -24,7 +24,7 @@
 #include "mm-private-boxed-types.h"
 #include "mm-plugin-hso.h"
 #include "mm-broadband-modem-hso.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 
 G_DEFINE_TYPE (MMPluginHso, mm_plugin_hso, MM_TYPE_PLUGIN)
 
@@ -70,7 +70,7 @@ hso_custom_init (MMPortProbe *probe,
 
         hsotype_path = g_build_filename (sysfs_path, "hsotype", NULL);
         if (g_file_get_contents (hsotype_path, &contents, NULL, NULL)) {
-            mm_dbg ("HSO port type %s: %s", hsotype_path, contents);
+            mm_obj_dbg (probe, "HSO port type %s: %s", hsotype_path, contents);
             if (g_str_has_prefix (contents, "Control")) {
                 g_object_set_data (G_OBJECT (probe), TAG_HSO_AT_CONTROL, GUINT_TO_POINTER (TRUE));
                 mm_port_probe_set_result_at (probe, TRUE);
@@ -176,7 +176,7 @@ mm_plugin_create (void)
 
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_HSO,
-                      MM_PLUGIN_NAME,               "Option High-Speed",
+                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
                       MM_PLUGIN_ALLOWED_DRIVERS,    drivers,
                       MM_PLUGIN_ALLOWED_AT,         TRUE,

@@ -38,7 +38,7 @@
 
 #include "mm-base-modem-at.h"
 #include "mm-broadband-bearer-mbm.h"
-#include "mm-log.h"
+#include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-mbm.h"
 #include "mm-daemon-enums-types.h"
@@ -180,11 +180,10 @@ connect_poll_ready (MMBaseModem          *modem,
     const gchar     *response;
     guint            state;
 
-    task = self->priv->connect_pending;
-    self->priv->connect_pending = NULL;
+    task = g_steal_pointer (&self->priv->connect_pending);
 
     if (!task) {
-        mm_dbg ("Connection context was finished already by an unsolicited message");
+        mm_obj_dbg (self, "connection context was finished already by an unsolicited message");
         /* Run _finish() to finalize the async call, even if we don't care
          * the result */
         mm_base_modem_at_command_full_finish (modem, res, NULL);
@@ -219,8 +218,7 @@ connect_poll_cb (MMBroadbandBearerMbm *self)
     GTask           *task;
     Dial3gppContext *ctx;
 
-    task = self->priv->connect_pending;
-    self->priv->connect_pending = NULL;
+    task = g_steal_pointer (&self->priv->connect_pending);
 
     g_assert (task);
     ctx = g_task_get_task_data (task);
@@ -234,7 +232,7 @@ connect_poll_cb (MMBroadbandBearerMbm *self)
     }
 
     /* Too many retries... */
-    if (ctx->poll_count > 50) {
+    if (ctx->poll_count > MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT) {
         g_assert (!ctx->saved_error);
         ctx->saved_error = g_error_new (MM_MOBILE_EQUIPMENT_ERROR,
                                         MM_MOBILE_EQUIPMENT_ERROR_NETWORK_TIMEOUT,
@@ -269,11 +267,10 @@ activate_ready (MMBaseModem          *modem,
 
     /* Try to recover the connection context. If none found, it means the
      * context was already completed and we have nothing else to do. */
-    task = self->priv->connect_pending;
-    self->priv->connect_pending = NULL;
+    task = g_steal_pointer (&self->priv->connect_pending);
 
     if (!task) {
-        mm_dbg ("Connection context was finished already by an unsolicited message");
+        mm_obj_dbg (self, "connection context was finished already by an unsolicited message");
         /* Run _finish() to finalize the async call, even if we don't care
          * the result */
         mm_base_modem_at_command_full_finish (modem, res, NULL);
@@ -321,7 +318,7 @@ activate (GTask *task)
     mm_base_modem_at_command_full (ctx->modem,
                                    ctx->primary,
                                    command,
-                                   3,
+                                   10,
                                    FALSE,
                                    FALSE, /* raw */
                                    g_task_get_cancellable (task),
@@ -362,22 +359,35 @@ authenticate (GTask *task)
 
     /* Both user and password are required; otherwise firmware returns an error */
     if (user || password) {
-        gchar *command;
-        gchar *encoded_user;
-        gchar *encoded_password;
+        g_autofree gchar  *command = NULL;
+        g_autofree gchar  *user_enc = NULL;
+        g_autofree gchar  *password_enc = NULL;
+        GError            *error = NULL;
 
-        encoded_user = mm_broadband_modem_take_and_convert_to_current_charset (MM_BROADBAND_MODEM (ctx->modem),
-                                                                               g_strdup (user));
-        encoded_password = mm_broadband_modem_take_and_convert_to_current_charset (MM_BROADBAND_MODEM (ctx->modem),
-                                                                                   g_strdup (password));
+        user_enc = mm_modem_charset_str_from_utf8 (user,
+                                                   mm_broadband_modem_get_current_charset (MM_BROADBAND_MODEM (ctx->modem)),
+                                                   FALSE,
+                                                   &error);
+        if (!user_enc) {
+            g_prefix_error (&error, "Couldn't convert user to current charset: ");
+            g_task_return_error (task, error);
+            g_object_unref (task);
+            return;
+        }
+
+        password_enc = mm_modem_charset_str_from_utf8 (password,
+                                                       mm_broadband_modem_get_current_charset (MM_BROADBAND_MODEM (ctx->modem)),
+                                                       FALSE,
+                                                       &error);
+        if (!password_enc) {
+            g_prefix_error (&error, "Couldn't convert password to current charset: ");
+            g_task_return_error (task, error);
+            g_object_unref (task);
+            return;
+        }
 
         command = g_strdup_printf ("AT*EIAAUW=%d,1,\"%s\",\"%s\"",
-                                   ctx->cid,
-                                   encoded_user ? encoded_user : "",
-                                   encoded_password ? encoded_password : "");
-        g_free (encoded_user);
-        g_free (encoded_password);
-
+                                   ctx->cid, user_enc, password_enc);
         mm_base_modem_at_command_full (ctx->modem,
                                        ctx->primary,
                                        command,
@@ -387,11 +397,10 @@ authenticate (GTask *task)
                                        g_task_get_cancellable (task),
                                        (GAsyncReadyCallback) authenticate_ready,
                                        task);
-        g_free (command);
         return;
     }
 
-    mm_dbg ("Authentication not needed");
+    mm_obj_dbg (self, "authentication not needed");
     activate (task);
 }
 
@@ -602,11 +611,8 @@ process_pending_disconnect_attempt (MMBroadbandBearerMbm     *self,
     DisconnectContext *ctx;
 
     /* Recover disconnection task */
-    task = self->priv->disconnect_pending;
-    self->priv->disconnect_pending = NULL;
-    g_assert (task != NULL);
-
-    ctx = g_task_get_task_data (task);
+    task = g_steal_pointer (&self->priv->disconnect_pending);
+    ctx  = g_task_get_task_data (task);
 
     if (ctx->poll_id) {
         g_source_remove (ctx->poll_id);
@@ -615,7 +621,7 @@ process_pending_disconnect_attempt (MMBroadbandBearerMbm     *self,
 
     /* Received 'DISCONNECTED' during a disconnection attempt? */
     if (status == MM_BEARER_CONNECTION_STATUS_DISCONNECTED) {
-        mm_dbg ("Connection disconnect indicated by an unsolicited message");
+        mm_obj_dbg (self, "connection disconnect indicated by an unsolicited message");
         g_task_return_boolean (task, TRUE);
     } else {
         /* Otherwise, report error */
@@ -638,11 +644,10 @@ disconnect_poll_ready (MMBaseModem          *modem,
     const gchar       *response;
     guint              state;
 
-    task = self->priv->disconnect_pending;
-    self->priv->disconnect_pending = NULL;
+    task = g_steal_pointer (&self->priv->disconnect_pending);
 
     if (!task) {
-        mm_dbg ("Disconnection context was finished already by an unsolicited message");
+        mm_obj_dbg (self, "disconnection context was finished already by an unsolicited message");
         /* Run _finish() to finalize the async call, even if we don't care
          * the result */
         mm_base_modem_at_command_full_finish (modem, res, NULL);
@@ -689,7 +694,7 @@ disconnect_poll_cb (MMBroadbandBearerMbm *self)
     ctx->poll_id = 0;
 
     /* Too many retries... */
-    if (ctx->poll_count > 20) {
+    if (ctx->poll_count > MM_BASE_BEARER_DEFAULT_DISCONNECTION_TIMEOUT) {
         g_task_return_new_error (task,
                                  MM_MOBILE_EQUIPMENT_ERROR,
                                  MM_MOBILE_EQUIPMENT_ERROR_NETWORK_TIMEOUT,
@@ -722,8 +727,7 @@ disconnect_enap_ready (MMBaseModem          *modem,
     GTask             *task;
     GError            *error = NULL;
 
-    task = self->priv->disconnect_pending;
-    self->priv->disconnect_pending = NULL;
+    task = g_steal_pointer (&self->priv->disconnect_pending);
 
     /* Try to recover the disconnection context. If none found, it means the
      * context was already completed and we have nothing else to do. */
@@ -737,7 +741,7 @@ disconnect_enap_ready (MMBaseModem          *modem,
     /* Ignore errors for now */
     mm_base_modem_at_command_full_finish (modem, res, &error);
     if (error) {
-        mm_dbg ("Disconnection failed (not fatal): %s", error->message);
+        mm_obj_dbg (self, "disconnection failed (not fatal): %s", error->message);
         g_error_free (error);
     }
 
@@ -815,8 +819,8 @@ report_connection_status (MMBaseBearer             *_self,
         return;
     }
 
-    mm_dbg ("Received spontaneous E2NAP (%s)",
-            mm_bearer_connection_status_get_string (status));
+    mm_obj_dbg (self, "received spontaneous E2NAP (%s)",
+                mm_bearer_connection_status_get_string (status));
 
     /* Received a random 'DISCONNECTED'...*/
     if (status == MM_BEARER_CONNECTION_STATUS_DISCONNECTED ||

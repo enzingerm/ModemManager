@@ -27,7 +27,6 @@
 #include "mm-plugin-samsung.h"
 #include "mm-private-boxed-types.h"
 #include "mm-broadband-modem-samsung.h"
-#include "mm-log.h"
 
 G_DEFINE_TYPE (MMPluginSamsung, mm_plugin_samsung, MM_TYPE_PLUGIN)
 
@@ -61,7 +60,7 @@ mm_plugin_create (void)
                                                { 0, 0 } };
     return MM_PLUGIN (
         g_object_new (MM_TYPE_PLUGIN_SAMSUNG,
-                      MM_PLUGIN_NAME,                "Samsung",
+                      MM_PLUGIN_NAME,                MM_MODULE_NAME,
                       MM_PLUGIN_ALLOWED_SUBSYSTEMS,  subsystems,
                       MM_PLUGIN_ALLOWED_PRODUCT_IDS, products,
                       MM_PLUGIN_ALLOWED_AT,          TRUE,
