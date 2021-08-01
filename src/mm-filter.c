@@ -242,7 +242,7 @@ mm_filter_port (MMFilter        *self,
         physdev_subsystem = mm_kernel_device_get_physdev_subsystem (port);
         /* Special rule for XMM7360 main tty port which would be filtered out by the platform driver otherwise */
         if (!g_strcmp0 (physdev_subsystem, "pci") && !g_strcmp0 (name, "ttyXMM1")) {
-            mm_dbg ("[filter] (%s/%s): XMM7360 TTY command port allowed", subsystem, name);
+            mm_obj_dbg (self, "(%s/%s): XMM7360 TTY command port allowed", subsystem, name);
             return TRUE;
         }
         if ((self->priv->enabled_rules & MM_FILTER_RULE_TTY_PLATFORM_DRIVER) &&
