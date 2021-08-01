@@ -79,7 +79,7 @@ mm_broadband_modem_xmm7360_init (MMBroadbandModemXmm7360 *self)
     /* initialize modem RPC */
     rpc = &self->priv->rpc;
     if(xmm7360_rpc_init(rpc) != 0) {
-        mm_err ("Failed to initialize XMM7360 RPC!");
+        mm_obj_err (self, "Failed to initialize XMM7360 RPC!");
         /* TODO: handle rpc initialization error */
         return;
     }
