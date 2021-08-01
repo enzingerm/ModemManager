@@ -13,6 +13,8 @@
 Makefile
 Makefile.in
 
+.vscode
+
 /INSTALL
 /aclocal.m4
 /autom4te.cache*
@@ -168,6 +170,8 @@ Makefile.in
 /plugins/ublox/mm-ublox-enums-types.[ch]
 /plugins/telit/mm-telit-enums-types.[ch]
 /plugins/huawei/mm-huawei-enums-types.[ch]
+
+/plugins/xmm7360/mm-xmm7360-rpc-enums-types.[ch]
 
 /test/lsudev
 /test/mmtty

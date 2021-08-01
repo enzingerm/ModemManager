@@ -1356,6 +1356,63 @@ libmm_plugin_sierra_la_LDFLAGS = $(PLUGIN_COMMON_LINKER_FLAGS)
 endif
 
 ################################################################################
+# plugin: xmm7360
+################################################################################
+
+if ENABLE_PLUGIN_XMM7360
+
+pkglib_LTLIBRARIES += libmm-plugin-xmm7360.la
+libmm_plugin_xmm7360_la_SOURCES = \
+	xmm7360/mm-plugin-xmm7360.c \
+	xmm7360/mm-plugin-xmm7360.h \
+	xmm7360/mm-broadband-modem-xmm7360.c \
+	xmm7360/mm-broadband-modem-xmm7360.h \
+	xmm7360/mm-bearer-xmm7360.c \
+	xmm7360/mm-bearer-xmm7360.h \
+	xmm7360/mm-xmm7360-rpc.c \
+	xmm7360/mm-xmm7360-rpc.h \
+	$(NULL)
+libmm_plugin_xmm7360_la_CPPFLAGS = \
+	$(PLUGIN_COMMON_COMPILER_FLAGS) \
+	$(XMM_COMMON_COMPILER_FLAGS) \
+	$(NULL)
+
+libmm_plugin_xmm7360_la_LDFLAGS  = $(PLUGIN_COMMON_LINKER_FLAGS)
+
+XMM7360_ENUMS_INPUTS = \
+	$(top_srcdir)/plugins/xmm7360/mm-xmm7360-rpc.h \
+	$(NULL)
+
+XMM7360_ENUMS_GENERATED = \
+	xmm7360/mm-xmm7360-rpc-enums-types.h \
+	xmm7360/mm-xmm7360-rpc-enums-types.c \
+	$(NULL)
+
+xmm7360/mm-xmm7360-rpc-enums-types.h: Makefile.am $(XMM7360_ENUMS_INPUTS) $(top_srcdir)/build-aux/mm-enums-template.h
+	$(AM_V_GEN) \
+		$(MKDIR_P) xmm7360; \
+		$(GLIB_MKENUMS) \
+			--fhead "#include \"mm-xmm7360-rpc.h\"\n#ifndef __MM_XMM7360_ENUMS_TYPES_H__\n#define __MM_XMM7360_ENUMS_TYPES_H__\n" \
+			--template $(top_srcdir)/build-aux/mm-enums-template.h \
+			--ftail "#endif /* __MM_XMM7360_ENUMS_TYPES_H__ */\n" \
+			$(XMM7360_ENUMS_INPUTS) > $@
+
+xmm7360/mm-xmm7360-rpc-enums-types.c: Makefile.am $(top_srcdir)/build-aux/mm-enums-template.c xmm7360/mm-xmm7360-rpc-enums-types.h
+	$(AM_V_GEN) \
+		$(MKDIR_P) xmm7360; \
+		$(GLIB_MKENUMS) \
+			--fhead "#include \"mm-xmm7360-rpc-enums-types.h\"" \
+			--template $(top_srcdir)/build-aux/mm-enums-template.c \
+			$(XMM7360_ENUMS_INPUTS) > $@
+
+nodist_libhelpers_xmm7360_la_SOURCES = $(XMM7360_ENUMS_GENERATED)
+
+BUILT_SOURCES += $(XMM7360_ENUMS_GENERATED)
+CLEANFILES    += $(XMM7360_ENUMS_GENERATED)
+
+endif
+
+################################################################################
 # plugin: simtech
 ################################################################################
 

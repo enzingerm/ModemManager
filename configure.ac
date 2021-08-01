@@ -509,6 +509,7 @@ MM_ENABLE_PLUGIN([ublox])
 MM_ENABLE_PLUGIN([via])
 MM_ENABLE_PLUGIN([wavecom])
 MM_ENABLE_PLUGIN([x22x])
+MM_ENABLE_PLUGIN([xmm7360])
 MM_ENABLE_PLUGIN([zte],
                  [with_shared_icera])
 
@@ -644,6 +645,7 @@ echo "
       via:                     ${enable_plugin_via}
       wavecom:                 ${enable_plugin_wavecom}
       x22x:                    ${enable_plugin_x22x}
+      xmm7360                  ${enable_plugin_xmm7360}
       zte:                     ${enable_plugin_zte}
 
     Miscellaneous:
