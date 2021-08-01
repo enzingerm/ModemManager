@@ -96,7 +96,7 @@ _connect (MMBaseBearer *_self,
             "No valid data port found to launch connection");
     }
 
-    mm_dbg ("XMM7360 Bearer: data port grabbed, now trying to connect!");
+    mm_obj_dbg (self, "XMM7360 Bearer: data port grabbed, now trying to connect!");
 
     /* Check whether we have an APN */
     apn = mm_bearer_properties_get_apn (mm_base_bearer_peek_config (_self));
@@ -124,7 +124,7 @@ _connect (MMBaseBearer *_self,
         return;
     }
 
-    mm_dbg ("XMM7360 Bearer: after attach APN config!");
+    mm_obj_dbg (self, "XMM7360 Bearer: after attach APN config!");
 
     if(xmm7360_net_attach(rpc, &status) != 0) {
         g_task_report_new_error (
@@ -137,7 +137,7 @@ _connect (MMBaseBearer *_self,
             "could not attach to net!");
         return;
     }
-    mm_dbg ("XMM7360 Bearer: after net attach!");
+    mm_obj_dbg (self, "XMM7360 Bearer: after net attach!");
     if(status == (gint32)0xffffffff) {
         while(!rpc->attach_allowed) {
             xmm7360_rpc_pump(rpc, NULL);
@@ -167,7 +167,7 @@ _connect (MMBaseBearer *_self,
         }
     }
 
-    mm_dbg ("XMM7360 Bearer: attached to net, waiting shortly before getting ip config!");
+    mm_obj_dbg (self, "XMM7360 Bearer: attached to net, waiting shortly before getting ip config!");
 
     // ugly: wait 1 seconds before fetching IP config
     sleep(1);
@@ -184,7 +184,7 @@ _connect (MMBaseBearer *_self,
         return;
     }
 
-    mm_dbg ("XMM7360 Bearer: IP config fetched!");
+    mm_obj_dbg (self, "XMM7360 Bearer: IP config fetched!");
 
     if(xmm7360_establish_connection(rpc) != 0) {
         g_task_report_new_error (
